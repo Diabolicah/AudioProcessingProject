@@ -1,0 +1,8 @@
+calm: Flat Horizontal
+surprised: Valley Waves
+happy: Flat, then down
+fearful: Flat Horizontal
+sad: Flat Horizontal
+angry: Sharp mountains
+disgust: Flat Horizontal
+

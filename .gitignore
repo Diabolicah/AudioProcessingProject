@@ -1,0 +1,39 @@
+denoiser_model/LibriSpeech
+denoiser_model/LibriSpeechNoisy/
+
+# Ignore json files
+*.json
+
+# Ignore all audio files
+*.wav
+*.flac
+
+#Ignore numpy files
+*.npy
+
+# Ignore Python cache files
+__pycache__/
+.ipynb_checkpoints/
+
+# Ignore environment files
+.env
+
+# Ignore system files
+.DS_Store
+
+# model training results
+Model Results/
+
+# dataset folders
+RAVDESS
+CREMA-D
+
+*.png
+*.pt
+*.zip
+
+attributes/
+training_results/
+heatmap_plots/
+
+TESS
