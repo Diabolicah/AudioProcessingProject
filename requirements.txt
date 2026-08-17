@@ -1,0 +1,53 @@
+# Runtime dependencies actually imported by the code, pinned to the versions in
+# Models/SentimentAnalysis/project_env.yml (conda env "final-project", Python 3.11).
+#
+# Note: the repository also contains `requirements.yml`. That file is a UTF-16
+# export of an unrelated conda environment named "tf" and it does NOT contain
+# captum, pytorch-grad-cam, opencv or TTS, so the XAI half of the project cannot
+# be installed from it. Use `project_env.yml` (conda) or this file (pip).
+#
+#     conda env create -f Models/SentimentAnalysis/project_env.yml
+#   or
+#     pip install -r requirements.txt
+
+# --- core ---
+numpy==1.26.4
+pandas==1.5.3
+scipy==1.15.2
+scikit-learn==1.6.1
+tqdm==4.67.1
+
+# --- audio ---
+librosa==0.11.0
+soundfile==0.13.1
+
+# --- deep learning ---
+# Install torch from the index that matches your CUDA build, e.g.
+#   pip install torch==2.5.1 torchvision==0.21.0 torchaudio==2.6.0 \
+#       --index-url https://download.pytorch.org/whl/cu121
+torch==2.5.1
+torchvision==0.21.0
+torchaudio==2.6.0
+
+# --- explainability ---
+captum==0.7.0            # TCAV (tcav_demo.py)
+grad-cam==1.5.5          # Grad-CAM (gradcam_utils.py); imported as `pytorch_grad_cam`
+opencv-python==4.11.0.86 # transitive requirement of grad-cam
+
+# --- plotting ---
+matplotlib==3.10.0
+seaborn==0.13.2
+pillow==11.0.0
+
+# --- notebooks ---
+ipykernel==6.30.1
+ipynbname==2024.1.0.0    # used by the analysis notebooks to locate the repo root
+
+# --- tests ---
+pytest==8.3.4
+
+# --- optional: XTTS neutral-speech synthesis (neutral_gen.py) ---
+# Only needed to regenerate the depth model's second input channel. It pins an
+# older numpy/torch than the rest of the project, so install it in a separate
+# environment.
+# TTS==0.22.0
