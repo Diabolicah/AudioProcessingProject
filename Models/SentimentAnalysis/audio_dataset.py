@@ -13,7 +13,7 @@ from torch.utils.data import Dataset
 
 from ConstPaths import RavdessPaths, CremaPaths, TessPaths
 from PreprocessParams import MAX_SPECTOGRAM_DURATION_IN_SECONDS, LABEL_STRINGS
-from Preprocess import audio_to_mel_spectrogram
+from Preprocess import audio_to_mel_spectrogram, audio_to_mel_spectrogram_aligned
 
 
 class AudioRawData(ABC):
@@ -365,8 +365,28 @@ class EmotionSpecDataset(Dataset):
         return class_weights.float()
 
 class EmotionSpecDataset2d(Dataset):
-    def __init__(self, data: set, class_names: Optional[Sequence[str]] = None):
-        """:param class_names: see :class:`EmotionSpecDataset`."""
+    def __init__(self, data: set, class_names: Optional[Sequence[str]] = None,
+                 align_durations: bool = False):
+        """
+        :param class_names: see :class:`EmotionSpecDataset`.
+        :param align_durations: time-stretch the synthesized neutral channel to
+            the duration of the original recording it is paired with.
+
+            The depth model's hypothesis (book, section 4.2.2) is that giving
+            the network a neutral rendition of the same sentence lets it
+            "identify the differences between the two input". That only works if
+            the two channels line up in time. They do not by default: XTTS
+            speaks faster than the actors, so the synthesized channel averages
+            0.67x the original's duration and 77% of pairs differ by more than
+            25%, which puts a given word in different frames of the two
+            channels. Stretching (phase-vocoder, pitch preserved) restores the
+            frame-wise correspondence the hypothesis assumes.
+
+            The stretch factor has to be applied per pair rather than baked into
+            the synthesis, because one neutral clip is shared by every emotion
+            recorded for that actor/statement/repetition.
+        """
+        self.align_durations = align_durations
         self._data = sorted_samples(data)
         self._paths , self._labels = zip(*self._data)
 
@@ -393,7 +413,11 @@ class EmotionSpecDataset2d(Dataset):
 
         # noam: audio_to_mel_spectrogram returns shape (freq_bins, time_frames)
         original_mel_spectrogram = audio_to_mel_spectrogram(file_path=file_pair[0]) # original audio
-        synthesized_mel_spectrogram = audio_to_mel_spectrogram(file_path=file_pair[1]) # synthesized audio
+        if self.align_durations:
+            synthesized_mel_spectrogram = audio_to_mel_spectrogram_aligned(
+                synthesized_path=file_pair[1], reference_path=file_pair[0])
+        else:
+            synthesized_mel_spectrogram = audio_to_mel_spectrogram(file_path=file_pair[1]) # synthesized audio
         
         # Convert to torch.Tensor
         original_mel_spectrogram = torch.from_numpy(original_mel_spectrogram).float()

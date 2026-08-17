@@ -122,18 +122,24 @@ def train_ravdess(trim: bool = False, augment: bool = False):
     return _run(model, train_ds, val_ds, test_ds, raw_name, tag)
 
 
-def train_depth():
-    """Two-channel depth model: original recording + XTTS neutral synthesis."""
+def train_depth(align_durations: bool = False):
+    """Two-channel depth model: original recording + XTTS neutral synthesis.
+
+    :param align_durations: time-stretch the neutral channel onto each
+        recording's duration so the two channels line up frame by frame; see
+        EmotionSpecDataset2d.
+    """
     raw = RavdessRawDataWithNeutral(include_calm=True)
     train, val, test = AllRawData((raw,)).train_val_test_split(VAL_RATIO, TEST_RATIO)
 
-    train_ds = EmotionSpecDataset2d(train, class_names=RAVDESS_LABELS)
-    val_ds = EmotionSpecDataset2d(val, class_names=RAVDESS_LABELS)
-    test_ds = EmotionSpecDataset2d(test, class_names=RAVDESS_LABELS)
+    kw = dict(class_names=RAVDESS_LABELS, align_durations=align_durations)
+    train_ds = EmotionSpecDataset2d(train, **kw)
+    val_ds = EmotionSpecDataset2d(val, **kw)
+    test_ds = EmotionSpecDataset2d(test, **kw)
 
     model = ResNetWithAttention2d(num_classes=len(RAVDESS_LABELS))
-    return _run(model, train_ds, val_ds, test_ds, "ravdess_raw_data_2d",
-                "DEPTH-MODEL-SGD-70-10-20")
+    tag = "DEPTH-MODEL-SGD-70-10-20" + ("-ALIGNED" if align_durations else "")
+    return _run(model, train_ds, val_ds, test_ds, "ravdess_raw_data_2d", tag)
 
 
 def train_tess():
@@ -177,6 +183,9 @@ if __name__ == '__main__':
     parser.add_argument("--seed", type=int, default=42, help="RNG seed (default: 42)")
     parser.add_argument("--trim", action="store_true",
                         help="trim leading/trailing silence (book section 3.2; ravdess only)")
+    parser.add_argument("--align-durations", action="store_true",
+                        help="depth run only: time-stretch the neutral channel onto each "
+                             "recording's duration so the two channels line up")
     parser.add_argument("--augment", action="store_true",
                         help="augment the ravdess train split 5x; reproduces the book's ~80%% "
                              "validation accuracy (see augment_ravdess_train)")
@@ -184,9 +193,15 @@ if __name__ == '__main__':
 
     set_seed(args.seed)
     if args.run == "ravdess":
+        if args.align_durations:
+            parser.error("--align-durations applies to the depth run")
         train_ravdess(trim=args.trim, augment=args.augment)
-    else:
+    elif args.run == "depth":
         if args.trim or args.augment:
             parser.error("--trim/--augment are currently wired for the ravdess run only")
+        train_depth(align_durations=args.align_durations)
+    else:
+        if args.trim or args.augment or args.align_durations:
+            parser.error("--trim/--augment/--align-durations do not apply to this run")
         RUNS[args.run]()
     sys.exit(0)

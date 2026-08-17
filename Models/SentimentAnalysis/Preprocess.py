@@ -121,6 +121,63 @@ def audio_to_mel_spectrogram(file_path: Path,
     return mel_spectrogram
 
 
+def audio_to_mel_spectrogram_aligned(synthesized_path: Path, reference_path: Path,
+                                     sample_rate: int = SAMPLE_RATE, **kwargs):
+    """Mel-spectrogram of `synthesized_path`, time-stretched to `reference_path`'s duration.
+
+    Used by the depth model so its two input channels line up frame by frame:
+    XTTS speaks faster than the RAVDESS actors, so without this the neutral
+    channel is ~0.67x the length of the recording it is meant to be compared
+    against. `librosa.effects.time_stretch` is a phase vocoder, so the voice's
+    pitch is preserved and only the tempo changes.
+    """
+    synthesized, _ = audio_to_waveform(synthesized_path, sample_rate)
+    reference, _ = audio_to_waveform(reference_path, sample_rate)
+
+    if len(synthesized) > 0 and len(reference) > 0:
+        rate = len(synthesized) / len(reference)
+        # Guard against pathological factors; librosa needs rate > 0.
+        if 0.1 < rate < 10.0 and abs(rate - 1.0) > 1e-3:
+            synthesized = librosa.effects.time_stretch(synthesized, rate=rate)
+
+    return waveform_to_mel_spectrogram(synthesized, sample_rate=sample_rate, **kwargs)
+
+
+def waveform_to_mel_spectrogram(waveform: np.ndarray,
+                                sample_rate: int = SAMPLE_RATE,
+                                n_fft=N_FFT,
+                                window_length=WINDOW_LENGTH,
+                                hop_length=HOP_LENGTH,
+                                n_mels: int = FREQUENCY_BIN_COUNT,
+                                max_length_in_seconds: float = MAX_SPECTOGRAM_DURATION_IN_SECONDS,
+                                resizing=True,
+                                normalization_fn: Callable[[np.ndarray], np.ndarray] = SPECTROGRAM_NORMALIZATION):
+    """Mel-spectrogram from an in-memory waveform.
+
+    Same pipeline as :func:`audio_to_mel_spectrogram` after the load step, so
+    callers that need to transform the waveform first stay bit-identical to the
+    file-based path.
+    """
+    mel_spectrogram = librosa.feature.melspectrogram(y=waveform,
+                                                     sr=sample_rate,
+                                                     n_mels=n_mels,
+                                                     n_fft=n_fft,
+                                                     win_length=window_length,
+                                                     hop_length=hop_length,
+                                                     power=2.0,
+                                                     center=False,
+                                                     )
+    if resizing:
+        mel_spectrogram = resize_spectrogram_to_max_duration(spectrogram=mel_spectrogram,
+                                                             max_duration_seconds=max_length_in_seconds,
+                                                             sample_rate=sample_rate,
+                                                             win_length=window_length,
+                                                             hop_length=hop_length)
+
+    mel_spectrogram = librosa.power_to_db(mel_spectrogram, ref=np.max)
+    return normalization_fn(mel_spectrogram)
+
+
 def resize_spectrogram_to_max_duration(spectrogram, max_duration_seconds, sample_rate, win_length, hop_length):
     """
     Pads or truncates a spectrogram to match the maximum duration in seconds.

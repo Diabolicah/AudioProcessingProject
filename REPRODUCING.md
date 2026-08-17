@@ -201,7 +201,7 @@ Run on RTX 5080 / torch 2.11+cu128. Splits reproduce the book's supports exactly
 | CAV-accuracy regime (Tables 5/13/16) | straddles 0.85 | 0.835-0.896 (600 patches, legacy mode) |
 | Table 6 magnitude range | -2.64..1.89 | -2.06..2.94 (legacy mode) |
 | **PCA spectrum (Figure 15)** | **79.8 / 14.6** | **81.4 / 14.7** sim / 85.6 / 10.6 captum run (augmented model, multiclass CAVs; band ~80-86 / 10-15 over classifier seeds) |
-| depth model (Table 2) | .713/.710/.705 test | .582/.587/.579 test (train 1.000 exact); the book's qualitative finding - depth is worse than single-input - reproduces |
+| depth model (Table 2) | .713/.710/.705 test | .627/.618/.615 test with `--align-durations` (train 1.000 exact); the book's qualitative finding - depth is worse than single-input - reproduces |
 
 Two of the book's numbers are only reachable with **training-set augmentation**
 (`main.py ravdess --augment`, using the transforms already present in
@@ -242,6 +242,18 @@ reproduces clearly (test weighted F1 0.579 vs 0.695 here; the book has 0.705 vs
 single-input counterpart than the book's is - unsurprising, since the neutral
 channel is regenerated audio rather than the authors' own synthesis run, and
 XTTS output varies between runs.
+
+**The neutral channel has to be time-aligned.** XTTS speaks about 31% faster
+than the RAVDESS actors, and no synthesis setting changes that: a second pass on
+GPU with four speaker references and temperature 0.3 produced the same 0.69
+duration ratio and a slightly *worse* channel correlation than the first. Since
+the two channels are stacked into fixed 4.5 s spectrograms, that tempo
+difference leaves them essentially unrelated frame to frame - measured
+inter-channel temporal correlation 0.076. Time-stretching the neutral channel
+onto each recording's duration (`main.py depth --align-durations`) raises it to
+0.260 and the test weighted F1 from 0.579 to 0.615, closing about a third of the
+gap to the book's 0.705. The stretch is per pair, in the dataset, because one
+neutral clip is shared by every emotion of that actor/statement/repetition.
 
 Per-class test F1 also reproduces the specific trade-off the book describes -
 the biggest losses are on emotions the neutral reference cannot help with:

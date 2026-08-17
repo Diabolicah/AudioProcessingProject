@@ -44,6 +44,7 @@ against the published numbers and is documented as such.
 - **`tcav_demo.py --multiclass-cavs --layer module3.blocks.1.conv2`** — one GPU cross-entropy classifier over all concepts instead of 12 pairwise fits. The only CAV design whose concept space has rank > 1: pairwise CAV directions have mean pairwise cosine **+0.995** (every classifier learns "is there a line"), multiclass ≈ 0. Grid-searched over layer × loss × weight decay × set design.
 - **Legacy flags** `--raw-concept-scale --legacy-captum-classifier` reproduce the book's original configuration exactly (including its broken accuracy metric), for auditability.
 - **`--trim`** implements the silence-trimming the book describes (§3.2) — measured: no validation gain, test drops. Off by default.
+- **`main.py depth --align-durations`** — time-stretch the synthesized neutral channel onto each recording's duration. XTTS speaks ~31% faster than the RAVDESS actors *whatever its settings*, so without this the depth model's two channels are effectively unrelated in time (measured inter-channel temporal correlation 0.076; 0.260 after). Worth +0.036 test F1. Not in the book, but the book's own hypothesis — that the network can "identify the differences between the two input" — presupposes the channels are comparable.
 
 ## 4. New infrastructure
 
@@ -74,7 +75,7 @@ per-class supports exactly (RAVDESS/TESS seed 42, CREMA-D seed 123).
 | CAV-accuracy regime (Tables 5/13/16) | straddles 0.85 | **0.835–0.896** (600 patches, legacy mode) |
 | Table 6 magnitude range | −2.64 … 1.89 | **−2.06 … 2.94** (legacy mode) |
 | PCA of concept space (Figure 15) | 79.8 / 14.6 | **81.4 / 14.7** (augmented model + multiclass CAVs; captum end-to-end run 85.6 / 10.6; varies ~80–86 / 10–15 over classifier seeds) |
-| depth model test P/R/F1 (Table 2) | .713 / .710 / .705 | **.582 / .587 / .579** (train 1.000 exact; direction reproduced — worse than single-input) |
+| depth model test P/R/F1 (Table 2) | .713 / .710 / .705 | **.627 / .618 / .615** with `--align-durations` (.582/.587/.579 without); train 1.000 exact; direction reproduced — worse than single-input |
 
 Book errata found on the way: Table 8 lists TESS val `surprised = 41` (total
 2801 vs the corpus's 2800; correct value 40); Table 3's validation supports sum
