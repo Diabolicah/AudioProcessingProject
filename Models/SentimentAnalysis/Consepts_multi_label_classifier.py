@@ -14,29 +14,20 @@
 # =========================
 
 # Imports
-import os
 from pathlib import Path
-from pprint import pprint
-from typing import Any, List, Tuple, Dict, Sequence, Optional
-from dataclasses import dataclass
-from xml.parsers.expat import model
+from typing import Any, List, Tuple, Dict, Optional
 
-from arrow import get
 import pandas as pd
-from regex import D
 from sklearn.model_selection import GroupShuffleSplit
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from torchvision import models
-from PIL import Image
 import numpy as np
-from collections import defaultdict
 
 from Preprocess import audio_to_mel_spectrogram
 from preproccess_for_concept_classification import prepare_spectrogram_for_backbone
-from tcav_demo import CONCEPT_UNIQUE_NAMES
+from concept_defs import CONCEPT_UNIQUE_NAMES
 
 # ---- your function is assumed to be defined/imported beforehand ----
 # from your_module import prepare_spectrogram_for_backbone
@@ -423,24 +414,23 @@ def train_evaluate_save():
     best_val_score = -1.0
     best_thresholds = torch.full((NUM_TAGS,), 0.5)
 
-    display_f1_per_class = None
     best_metrics_dict = {}
     for epoch in range(1, EPOCHS + 1):
         train_loss = train_one_epoch(model, train_loader, optimizer, criterion)
         metrics_dict = evaluate_multi_label(model, val_loader, criterion)
-        val_loss, f1_micro, f1_macro, val_logits, val_targets, f1_per_class = metrics_dict['loss'], metrics_dict['f1_micro'], metrics_dict['f1_macro'], metrics_dict['logits'], metrics_dict['targets'], metrics_dict['extra']['f1_per_class']
+        val_loss, f1_micro, f1_macro, val_logits, val_targets = (
+            metrics_dict['loss'], metrics_dict['f1_micro'], metrics_dict['f1_macro'],
+            metrics_dict['logits'], metrics_dict['targets'])
         # optional per-label threshold calibration on validation set
         if CALIBRATE_THRESHOLDS:
             best_thresholds = calibrate_thresholds(val_targets, val_logits)
             val_probs = torch.sigmoid(val_logits)
-            f1_micro_cal, f1_macro_cal, f1_per_class_cal = f1_micro_macro(val_targets, val_probs, thresholds=best_thresholds)
+            f1_micro_cal, f1_macro_cal, _ = f1_micro_macro(val_targets, val_probs, thresholds=best_thresholds)
             display_f1 = f1_micro_cal
             display_macro = f1_macro_cal
-            display_f1_per_class = f1_per_class_cal
         else:
             display_f1 = f1_micro
             display_macro = f1_macro
-            display_f1_per_class = f1_per_class
 
         print(f"[{epoch:02d}/{EPOCHS}] "
             f"train_loss={train_loss:.4f}  val_loss={val_loss:.4f}  "
@@ -458,7 +448,7 @@ def train_evaluate_save():
                 "thresholds": best_thresholds.cpu(),
                 "all_tags": ALL_TAGS,
             }, CKPT_PATH)
-            print(f"  ↪ saved best checkpoint to {CKPT_PATH} (F1_micro={best_val_score:.4f})")
+            print(f"  -> saved best checkpoint to {CKPT_PATH} (F1_micro={best_val_score:.4f})")
     print('best metrics: ')
     print(best_metrics_dict)
     print("Training done.") 

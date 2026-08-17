@@ -1,20 +1,25 @@
 import math
 from pathlib import Path
-from re import L, S
-from tkinter import N
 from typing import List, Optional, Tuple
-from cv2 import mean
-import librosa, librosa.display
+
 import matplotlib.pyplot as plt
 import numpy as np
-from param import random_seed
-from scipy.signal import chirp, square
-from sympy import sec
-from torch import long
+
 from Preprocess import audio_to_mel_spectrogram
 from Visualizations import plot_mel_spectrogram
 
 from PreprocessParams import MAX_SPECTOGRAM_DURATION_IN_SECONDS, TARGET_FRAMES, FREQUENCY_BIN_COUNT, HOP_LENGTH, SAMPLE_RATE
+# The concept catalogue lives in a dependency-free module so that TCAV, the
+# multi-label tagger and the tests can import the names without pulling in
+# librosa/matplotlib. Re-exported here for backwards compatibility.
+from concept_defs import (CONCEPT_RANDOM_SEED, CONCEPT_SAMPLES_PER_DIR,  # noqa: F401 - re-exported
+                          CONCEPT_SPECS, CONCEPT_UNIQUE_NAMES, dir_name as _dir_name)
+
+# Re-exported for backwards compatibility with older imports.
+__all__ = ["CONCEPT_RANDOM_SEED", "CONCEPT_SAMPLES_PER_DIR", "CONCEPT_SPECS",
+           "CONCEPT_UNIQUE_NAMES", "CREATE_ALL_CONCEPT_DIRS", "create_concept_dir",
+           "generate_concept_patch_for_raw_input", "generate_concept_patch_for_labels",
+           "generate_random_pattern_spectrogram"]
 
 
 # --- Your concept knobs (means + stds) ---
@@ -115,10 +120,8 @@ def _thickness_from_label(thick_label: str, rng: np.random.Generator) -> float:
 def _thickness_from_thickness(mean_thickness: float, rng: np.random.Generator, random_thickness_boundary: float=0.5) -> float:
     return float(_clip(mean_thickness + rng.uniform(-random_thickness_boundary, random_thickness_boundary), 1.0, 32.0))
 
-# writes the directory name for a concept based on its factors
-def _dir_name(length: str, tone: str, rate: str, thickness: str) -> str:
-    """Build the canonical directory name string for a concept based on its factors."""
-    return f"{length}_{tone}_{rate}_{thickness}" if tone != "constant" else f"{length}_{tone}_{thickness}"
+# _dir_name is imported from concept_defs above - do not redefine it here, or the
+# names TCAV resolves and the directories written on disk can diverge again.
 
 # convert angle in degrees to slope in dy/dx
 def _slope_pixels_per_frame(angle_deg: float) -> float:
@@ -252,6 +255,14 @@ def create_concept_dir(
         length, tone, rate, thickness: Concept factors.
         n_samples: Number of samples to generate.
         seed: Optional seed for reproducibility.
+        random_thickness_boundary: **accepted but deliberately not forwarded.**
+            Two of the twelve specs set it to 0.2, but this function has always
+            called `generate_concept_patch_for_raw_input` without it, so every
+            concept was generated with the 0.5 default. Forwarding it now would
+            consume the RNG stream differently and change every patch, breaking
+            the match with Figures 5-6 that
+            `test_concept_generation_reproduces_the_book_figures` pins. Left as
+            is on purpose; see that test before changing it.
 
     Returns:
         Path to the created concept subdirectory.
@@ -339,211 +350,15 @@ def TEST_generate_concept_patch():
     
     plt.show()
 
-def CREATE_ALL_CONCEPT_DIRS():
-    random_seed = 42
-    samples_count = 60
-    
-    
-    ######## RISING: ########
-    
-    ##### VV #####
-    create_concept_dir(
-        base_dir=Path("positive concepts dataset"),
-        length="long",
-        tone="rising",
-        rate="steep",
-        thickness="thin",
-        mean_length=0.085,
-        std_length=0.01,
-        mean_tone_degree=57,
-        std_tone_degree=8,
-        mean_thickness=3,
-        n_samples=samples_count,
-        seed=random_seed
-    )
-    
-    ##### VV #####
-    create_concept_dir(
-        base_dir=Path("positive concepts dataset"),
-        length="long",
-        tone="rising",
-        rate="steep",
-        thickness="thick",
-        mean_length=0.085,
-        std_length=0.007,
-        mean_tone_degree=57,
-        std_tone_degree=4,
-        mean_thickness=4.9,
-        random_thickness_boundary=0.2,
-        n_samples=samples_count,
-        seed=random_seed
-    )
-    
-    ##### VV #####  
-    create_concept_dir(
-        base_dir=Path("positive concepts dataset"),
-        length="long",
-        tone="rising",
-        rate="flat",
-        thickness="thick",
-        mean_length=0.1,
-        std_length=0.01,
-        mean_tone_degree=33,
-        std_tone_degree=8,
-        mean_thickness=3.3,
-        n_samples=samples_count,
-        seed=random_seed
-    )
-    
-    ##### VV #####
-    create_concept_dir(
-        base_dir=Path("positive concepts dataset"),
-        length="short",
-        tone="rising",
-        rate="steep",
-        thickness="thin",
-        mean_length=0.049,
-        std_length=0.004,
-        mean_tone_degree=32,
-        std_tone_degree=7,
-        mean_thickness=3,
-        n_samples=samples_count,
-        seed=random_seed
-    )
-
-    ##### VV #####
-    create_concept_dir(
-        base_dir=Path("positive concepts dataset"),
-        length="short",
-        tone="rising",
-        rate="steep",
-        thickness="thick",
-        mean_length=0.05,
-        std_length=0.008,
-        mean_tone_degree=32,
-        std_tone_degree=7,
-        mean_thickness=5,
-        n_samples=samples_count,
-        seed=random_seed
-    )
-    
-    ######## CONSTANT: ########
-    
-    ##### VV #####
-    create_concept_dir(
-        base_dir=Path("positive concepts dataset"),
-        length="long",
-        tone="constant",
-        rate="ignored",
-        thickness="thick",
-        mean_length=0.4,
-        std_length=0.06,
-        mean_tone_degree=0,
-        std_tone_degree=1.3,
-        mean_thickness=2.92,
-        n_samples=samples_count,
-        seed=random_seed
-    )
-    
-    ##### VV #####
-    create_concept_dir(
-        base_dir=Path("positive concepts dataset"),
-        length="short",
-        tone="constant",
-        rate="ignored",
-        thickness="thick",
-        mean_length=0.17,
-        std_length=0.027,
-        mean_tone_degree=0,
-        std_tone_degree=1.3,
-        mean_thickness=2.92,
-        n_samples=samples_count,
-        seed=random_seed
-    )
-    
-    ######## Dropping: ########
-    
-    ##### VV #####
-    create_concept_dir(
-        base_dir=Path("positive concepts dataset"),
-        length="long",
-        tone="dropping",
-        rate="steep",
-        thickness="thin",
-        mean_length=0.085,
-        std_length=0.01,
-        mean_tone_degree=-57,
-        std_tone_degree=8,
-        mean_thickness=3,
-        n_samples=samples_count,
-        seed=random_seed
-    )
-    
-    ##### VV #####
-    create_concept_dir(
-        base_dir=Path("positive concepts dataset"),
-        length="long",
-        tone="dropping",
-        rate="steep",
-        thickness="thick",
-        mean_length=0.085,
-        std_length=0.007,
-        mean_tone_degree=-57,
-        std_tone_degree=4,
-        mean_thickness=4.9,
-        random_thickness_boundary=0.2,
-        n_samples=samples_count,
-        seed=random_seed
-    )
-    
-    
-    ##### VV #####
-    create_concept_dir(
-        base_dir=Path("positive concepts dataset"),
-        length="long",
-        tone="dropping",
-        rate="flat",
-        thickness="thick",
-        mean_length=0.1,
-        std_length=0.01,
-        mean_tone_degree=-33,
-        std_tone_degree=8,
-        mean_thickness=3.3,
-        n_samples=samples_count,
-        seed=random_seed
-    )
-    
-    ##### VV #####
-    create_concept_dir(
-        base_dir=Path("positive concepts dataset"),
-        length="short",
-        tone="dropping",
-        rate="steep",
-        thickness="thin",
-        mean_length=0.049,
-        std_length=0.004,
-        mean_tone_degree=-32,
-        std_tone_degree=7,
-        mean_thickness=3,
-        n_samples=samples_count,
-        seed=random_seed
-    )
-    
-    ##### VV #####
-    create_concept_dir(
-        base_dir=Path("positive concepts dataset"),
-        length="short",
-        tone="dropping",
-        rate="steep",
-        thickness="thick",
-        mean_length=0.05,
-        std_length=0.008,
-        mean_tone_degree=-32,
-        std_tone_degree=7,
-        mean_thickness=5,
-        n_samples=samples_count,
-        seed=random_seed
-    )
+def CREATE_ALL_CONCEPT_DIRS(base_dir: Path = Path("positive concepts dataset"),
+                            n_samples: int = CONCEPT_SAMPLES_PER_DIR,
+                            seed: int = CONCEPT_RANDOM_SEED) -> List[Path]:
+    """Write one directory of `n_samples` .npy patches per concept in CONCEPT_SPECS."""
+    created = []
+    for spec in CONCEPT_SPECS:
+        created.append(create_concept_dir(base_dir=base_dir, n_samples=n_samples, seed=seed, **spec))
+        print(f"wrote {n_samples} patches to {created[-1]}")
+    return created
 
 def TEST_generate_random_pattern_spectrogram(pattern_type=None):
     random_negatives = [

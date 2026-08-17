@@ -53,7 +53,10 @@ kernel_list = dict({
             [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             ], dtype=float),
-    'disgust' : np.array([
+    # Key must be the canonical label spelling ("disgusted", not "disgust"),
+    # otherwise gradcam_utils never finds this kernel and silently skips the
+    # cross-correlation row for disgust.
+    'disgusted' : np.array([
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
             [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1],
             [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
@@ -70,31 +73,20 @@ def normalize_sum(temp_kernel):
 
 kernel_list = {emotion: normalize_sum(kernel) for emotion, kernel in kernel_list.items()}
 # Normalize so correlation scores are interpretable
-#correlation_kernel /= correlation_kernel.sum()
 
 
-# # Kernel size
-# freq_bins = 40   # vertical axis (frequency)
-# time_bins = 20   # horizontal axis (time)
-#
-# # Create smooth frequency profile: almost flat, small gentle slope
-# freq_profile = np.linspace(1, 0.9, freq_bins)[:, np.newaxis]  # very gentle high→low
-#
-# # Smooth time modulation: soft sine wave
-# time_profile = np.sin(np.linspace(0, np.pi, time_bins))[np.newaxis, :]
-#
-# # Combine profiles to get 2D kernel
-# kernel = freq_profile * time_profile  # element-wise multiplication
-#
-# # Normalize: zero-mean and unit-norm
-# kernel -= kernel.mean()
-# kernel /= np.linalg.norm(kernel) + 1e-12
-#
-# # Visualize
-plt.figure(figsize=(6,4))
-plt.imshow(kernel_list['surprised'], aspect='auto', origin='lower', cmap='RdBu_r')
-plt.colorbar(label='Amplitude')
-plt.title("Smooth Flat-Frequency Kernel (40x20)")
-plt.xlabel("Time bins")
-plt.ylabel("Frequency bins")
-plt.show()
+def show_kernel(emotion: str = 'surprised') -> None:
+    """Visualise one hand-built correlation kernel."""
+    plt.figure(figsize=(6, 4))
+    plt.imshow(kernel_list[emotion], aspect='auto', origin='lower', cmap='RdBu_r')
+    plt.colorbar(label='Amplitude')
+    plt.title(f"Correlation kernel: {emotion}")
+    plt.xlabel("Time bins")
+    plt.ylabel("Frequency bins")
+    plt.show()
+
+
+if __name__ == "__main__":
+    # This used to run at import time, so `import correlation_kernel_playground`
+    # (which gradcam_utils does) opened a blocking matplotlib window.
+    show_kernel('surprised')
