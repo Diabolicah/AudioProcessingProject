@@ -1,7 +1,7 @@
 import re
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, AnyStr, Iterable, Optional
+from typing import Any, AnyStr, Iterable, Optional, Sequence
 from typing import Tuple
 from collections import Counter
 import os
@@ -64,7 +64,12 @@ class AudioRawData(ABC):
         print(f"Total label counts: {counter}")
 
 class RavdessRawData(AudioRawData):
-    def __init__(self, include_calm: bool = False, include_aug: bool = False):
+    # `include_calm` defaults to True: the book (Table 1 / Table 3) reports eight
+    # RAVDESS classes with `calm` and `neutral` kept apart, and the per-class
+    # supports it lists (calm 38, neutral 19 in the test split) only come out of
+    # the eight-class labelling. Folding calm into neutral gives seven classes
+    # and different supports.
+    def __init__(self, include_calm: bool = True, include_aug: bool = False):
         self._include_calm = include_calm
         self._include_aug = include_aug
         super().__init__(RavdessPaths.AUDIO_ORIGINAL_DATA, {".wav"}, r"^\d{2}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}-\d{2}$")
@@ -158,6 +163,19 @@ class TESSRawData(AudioRawData):
         return file_emotion_mapping[emotion_ds_id]
 
 
+def sorted_samples(samples: Iterable) -> list:
+    """Deterministic ordering for a set of (path, label) samples.
+
+    The raw-data classes hold their samples in a `set`. Iteration order over a
+    set of `Path` objects depends on string hashing, which Python randomises per
+    process unless PYTHONHASHSEED is fixed - so `list(some_set)` produced a
+    different order on every run, and `train_test_split(..., random_state=42)`
+    therefore produced a *different* split on every run despite the fixed seed.
+    Sorting first is what makes the reported splits reproducible.
+    """
+    return sorted(samples, key=lambda sample: str(sample[0]))
+
+
 class AllRawData:
     def __init__(self, raw_datasets: tuple[AudioRawData, ...], val_ratio: float = 0.3):
         sets_of_data = (raw_dataset.all_data for raw_dataset in raw_datasets)
@@ -167,15 +185,18 @@ class AllRawData:
     def train_val_test_split(self, val_ratio: float = 0.1, test_ratio: float = 0.2):
         """
         Splits the data into train, validation, and test sets.
+        Defaults reproduce the book's 70-10-20 split (section 4.2.1).
         :param val_ratio: Floating value between 0 and 1, ratio of data for validation.
         :param test_ratio: Floating value between 0 and 1, ratio of data for testing.
         :return: train_data, val_data, test_data
         """
+        ordered_data = sorted_samples(self._all_raw_data)
+
         # First split off the test set
         train_val_data, self._test_data = train_test_split(
-            list(self._all_raw_data),
+            ordered_data,
             test_size=test_ratio,
-            stratify=[label for _, label in self._all_raw_data],
+            stratify=[label for _, label in ordered_data],
             random_state=42
         )
 
@@ -201,6 +222,10 @@ class AllRawData:
     @property
     def val_data(self) -> set[tuple[Path, Any]]:
         return self._val_data
+
+    @property
+    def test_data(self) -> set[tuple[Path, Any]]:
+        return self._test_data
 
     def print_all_label_counts(self) -> None:
         """
@@ -259,12 +284,30 @@ class TessSplitttedRawData(SplitttedAudioRawData):
     
     
 class EmotionSpecDataset(Dataset):
-    def __init__(self, file_paths: Iterable, max_length_in_seconds: float = MAX_SPECTOGRAM_DURATION_IN_SECONDS):
-        self._data = list(file_paths)
+    def __init__(self, file_paths: Iterable, max_length_in_seconds: float = MAX_SPECTOGRAM_DURATION_IN_SECONDS,
+                 class_names: Optional[Sequence[str]] = None, trim: bool = False):
+        """
+        :param class_names: Explicit label space shared by every split. Pass it
+            (e.g. PreprocessParams.RAVDESS_LABELS) whenever train/val/test are
+            built separately: LabelEncoder is fitted per split, so a split that
+            happens to be missing a rare class would otherwise encode every
+            later class to a different integer than the other splits, silently
+            scrambling the labels. Defaults to the labels present in this split.
+        """
+        # sorted_samples keeps __getitem__ indices stable across runs even when
+        # the caller hands over a set (see sorted_samples' docstring).
+        self._data = sorted_samples(file_paths)
         self._paths , self._labels = zip(*self._data)
 
         self.__label_encoder = LabelEncoder()
-        self._labels = torch.tensor(self.__label_encoder.fit_transform(self._labels))
+        if class_names is not None:
+            self.__label_encoder.fit(sorted(class_names))
+            unknown = set(self._labels) - set(self.__label_encoder.classes_)
+            if unknown:
+                raise ValueError(f"Labels {sorted(unknown)} are not in the declared class list {sorted(class_names)}")
+            self._labels = torch.tensor(self.__label_encoder.transform(self._labels))
+        else:
+            self._labels = torch.tensor(self.__label_encoder.fit_transform(self._labels))
         self._class_names = list(self.__label_encoder.classes_)
 
         # Get the number of classes
@@ -274,6 +317,7 @@ class EmotionSpecDataset(Dataset):
         self.class_weights = self.__compute_class_weights()
 
         self.max_length_in_seconds = max_length_in_seconds
+        self.trim = trim
 
     def __len__(self):
         return len(self._data)
@@ -283,7 +327,8 @@ class EmotionSpecDataset(Dataset):
         label = self._labels[idx]
 
         # noam: audio_to_mel_spectrogram returns shape (freq_bins, time_frames)
-        mel_spectrogram = audio_to_mel_spectrogram(file_path=file_path, max_length_in_seconds=self.max_length_in_seconds)
+        mel_spectrogram = audio_to_mel_spectrogram(file_path=file_path, max_length_in_seconds=self.max_length_in_seconds,
+                                                   trim=self.trim)
 
         # Convert to torch.Tensor
         mel_spectrogram = torch.from_numpy(mel_spectrogram).float()
@@ -320,12 +365,17 @@ class EmotionSpecDataset(Dataset):
         return class_weights.float()
 
 class EmotionSpecDataset2d(Dataset):
-    def __init__(self, data: set):
-        self._data = data
+    def __init__(self, data: set, class_names: Optional[Sequence[str]] = None):
+        """:param class_names: see :class:`EmotionSpecDataset`."""
+        self._data = sorted_samples(data)
         self._paths , self._labels = zip(*self._data)
 
         self.__label_encoder = LabelEncoder()
-        self._labels = torch.tensor(self.__label_encoder.fit_transform(self._labels))
+        if class_names is not None:
+            self.__label_encoder.fit(sorted(class_names))
+            self._labels = torch.tensor(self.__label_encoder.transform(self._labels))
+        else:
+            self._labels = torch.tensor(self.__label_encoder.fit_transform(self._labels))
         self._class_names = list(self.__label_encoder.classes_)
 
         # Get the number of classes
@@ -405,11 +455,18 @@ class RavdessRawDataWithNeutral(AudioRawData):
         }
 
         result = {
-            (tuple, self.get_attribute_from_filename(tuple[0], "emotion")[1])
-            for tuple in files
+            (pair, self._label_for(pair[0]))
+            for pair in files
         }
 
         return result
+
+    def _label_for(self, original_file: Path) -> str:
+        """Canonical emotion label, honouring the `include_calm` flag."""
+        label = self.get_attribute_from_filename(original_file, "emotion")[1]
+        if label == LABEL_STRINGS.CALM and not self._include_calm:
+            return LABEL_STRINGS.NEUTRAL
+        return label
 
     def __get_emotion_from_index(self, filename):
         """
@@ -427,8 +484,8 @@ class RavdessRawDataWithNeutral(AudioRawData):
             '04': 'sad',
             '05': 'angry',
             '06': 'fearful',
-            '07': 'disgust',
-            '08': 'surprised'
+            '07': LABEL_STRINGS.DISGUSTED,
+            '08': LABEL_STRINGS.SURPRISED
         }
 
         emotion_index = numbers[2]
@@ -462,8 +519,13 @@ class RavdessRawDataWithNeutral(AudioRawData):
         num2attrvalue = {
             "modality": {"01": "full-AV", "02": "video-only", "03": "audio-only"},
             "vocal_channel": {"01": "speech", "02": "song"},
-            "emotion": {"01": "neutral", "02": "calm", "03": "happy", "04": "sad", "05": "angry", "06": "fearful",
-                        "07": "disgust", "08": "surprised"},
+            # Spellings must match PreprocessParams.LABEL_STRINGS: the label
+            # encoder sorts class names, so "disgust" and "disgusted" are two
+            # different classes and mixing them across modules silently shifts
+            # every model output index after 'c'.
+            "emotion": {"01": LABEL_STRINGS.NEUTRAL, "02": LABEL_STRINGS.CALM, "03": LABEL_STRINGS.HAPPY,
+                        "04": LABEL_STRINGS.SAD, "05": LABEL_STRINGS.ANGRY, "06": LABEL_STRINGS.FEARFUL,
+                        "07": LABEL_STRINGS.DISGUSTED, "08": LABEL_STRINGS.SURPRISED},
             "emotional_intensity": {"01": "normal", "02": "strong"},
             "statement": {"01": "kids", "02": "dogs"},
             "repetition": {"01": 1, "02": 2},
@@ -487,6 +549,14 @@ class RavdessRawDataWithNeutral(AudioRawData):
 
 
 class AudioRawDataWithOriginalNeutral(AudioRawData):
+    """Superseded by RavdessRawDataWithNeutral and not used by any reported run.
+
+    It pairs each recording with a *real* neutral take by the same actor rather
+    than with the XTTS synthesis the book describes (section 4.2.2), and its
+    `_scan_supported_files` override drops the base class's `file_pattern`
+    argument, so instantiating it raises TypeError. Kept only for reference.
+    """
+
     def __init__(self):
         super().__init__(RavdessPaths.AUDIO_ORIGINAL_DATA, {".wav"}) # the path that will be the data root
 
@@ -572,8 +642,13 @@ class AudioRawDataWithOriginalNeutral(AudioRawData):
         num2attrvalue = {
             "modality": {"01": "full-AV", "02": "video-only", "03": "audio-only"},
             "vocal_channel": {"01": "speech", "02": "song"},
-            "emotion": {"01": "neutral", "02": "calm", "03": "happy", "04": "sad", "05": "angry", "06": "fearful",
-                        "07": "disgust", "08": "surprised"},
+            # Spellings must match PreprocessParams.LABEL_STRINGS: the label
+            # encoder sorts class names, so "disgust" and "disgusted" are two
+            # different classes and mixing them across modules silently shifts
+            # every model output index after 'c'.
+            "emotion": {"01": LABEL_STRINGS.NEUTRAL, "02": LABEL_STRINGS.CALM, "03": LABEL_STRINGS.HAPPY,
+                        "04": LABEL_STRINGS.SAD, "05": LABEL_STRINGS.ANGRY, "06": LABEL_STRINGS.FEARFUL,
+                        "07": LABEL_STRINGS.DISGUSTED, "08": LABEL_STRINGS.SURPRISED},
             "emotional_intensity": {"01": "normal", "02": "strong"},
             "statement": {"01": "kids", "02": "dogs"},
             "repetition": {"01": 1, "02": 2},
@@ -613,8 +688,8 @@ class AudioRawDataWithOriginalNeutral(AudioRawData):
             '04': 'sad',
             '05': 'angry',
             '06': 'fearful',
-            '07': 'disgust',
-            '08': 'surprised'
+            '07': LABEL_STRINGS.DISGUSTED,
+            '08': LABEL_STRINGS.SURPRISED
         }
 
         emotion_index = numbers[2]

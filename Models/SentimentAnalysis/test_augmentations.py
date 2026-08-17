@@ -110,7 +110,7 @@ def process_file(wav_path: Path):
         try:
             aug_wave = func(waveform, sr)
             sf.write(out_path, aug_wave, sr)
-            print("✔", out_path.relative_to(root_dir))
+            print("[ok]", out_path.relative_to(root_dir))
         except Exception as e:
             print(f"[!] Failed {name} on {wav_path.name}: {e}")
 
@@ -122,7 +122,7 @@ def walk_ravdess(root: Path):
     if not wav_files:
         print("No WAV files found under", root)
         return
-    print(f"Found {len(wav_files)} wav files. Processing…")
+    print(f"Found {len(wav_files)} wav files. Processing...")
     for wav in wav_files:
         process_file(wav)
 

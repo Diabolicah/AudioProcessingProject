@@ -3,11 +3,8 @@ from pathlib import Path
 import typing
 import re
 from tqdm import tqdm
-import torch
-#from torch.serialization import add_safe_globals
-from TTS.tts.configs.xtts_config import XttsAudioConfig, XttsConfig
-from TTS.tts.configs.shared_configs import BaseDatasetConfig
-from TTS.api import TTS
+# TTS (Coqui XTTS) is only needed to actually synthesise audio; it pins old
+# torch/numpy versions, so it is imported lazily inside __main__ below.
 
 from ConstPaths import RavdessPaths
 from audio_dataset import RavdessRawDataWithNeutral
@@ -28,7 +25,13 @@ def get_neutral_files_from_ravdess() -> typing.Set[Path]:
     :return: A set of Path objects representing the file paths of the neutral audio files.
     :rtype: typing.Set[Path]
     """
-    all_neutral_files: typing.Set[Path] = set(RavdessPaths.AUDIO_ORIGINAL_DATA.rglob("*-*-01-*-*-*-*.wav"))
+    # `*` in a glob also matches '-', so the old pattern "*-*-01-*-*-*-*.wav"
+    # matched any filename containing "-01-" anywhere - e.g. the *intensity*
+    # field of an angry take - and pulled non-neutral recordings in. '?' matches
+    # exactly one character, which pins "01" to the emotion field.
+    all_neutral_files: typing.Set[Path] = set(
+        RavdessPaths.AUDIO_ORIGINAL_DATA.rglob("??-??-01-??-??-??-??.wav")
+    )
     return all_neutral_files
 
 
@@ -141,7 +144,7 @@ def create_txt_files_for_deepfake() -> None:
             saved_file.writelines([STATEMENT_MAPPING.get(statement_value), '\n', neutral_audio_path_reference.__str__()])
 
 def deepfake_and_create_synthesized_dataset(tts_model) -> None:
-    """
+    r"""
     Creates a synthesized dataset for deepfake processing.
 
     This function generates a directory structure for the synthesized dataset,
@@ -186,6 +189,8 @@ def deepfake_and_create_synthesized_dataset(tts_model) -> None:
 if __name__ == '__main__':
     create_txt_files_for_deepfake()
 
+    # import torch
+    # from TTS.api import TTS
     # device = "cuda" if torch.cuda.is_available() else "cpu"
     # print(f"Using device: {device}")
     # tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(device)

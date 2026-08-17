@@ -4,9 +4,9 @@ from typing import Callable
 
 import librosa
 import numpy as np
-import torch.nn.functional
-
-from PreprocessParams import *
+from PreprocessParams import (FREQUENCY_BIN_COUNT, HOP_LENGTH,
+                              MAX_SPECTOGRAM_DURATION_IN_SECONDS, N_FFT, SAMPLE_RATE,
+                              SPECTROGRAM_NORMALIZATION, TOP_DB, WINDOW_LENGTH)
 
 # Create a logger object
 logger = logging.getLogger(__name__)
@@ -67,7 +67,8 @@ def audio_to_mel_spectrogram(file_path: Path,
                             max_length_in_seconds: float = MAX_SPECTOGRAM_DURATION_IN_SECONDS,
                             resizing = True,
                             top_db: int = TOP_DB,
-                            normalization_fn: Callable[[np.ndarray], np.ndarray] = lambda x: x):
+                            trim: bool = False,
+                            normalization_fn: Callable[[np.ndarray], np.ndarray] = SPECTROGRAM_NORMALIZATION):
     """
     Given audio file path, extracts its waveform and from it creates a mel-spectrogram.
     :param resizing: True if you wish to resize the spectrogram to a fixed length.
@@ -78,12 +79,20 @@ def audio_to_mel_spectrogram(file_path: Path,
     :param hop_length: Hop length in frames for spectrogram.
     :param n_mels: Number of frequency bins for the spectrogram. Defaults to FREQUENCY_BIN_COUNT macro.
     :param max_length_in_seconds: Limit on the length of spectrogram in seconds. Defaults to MAX_SPECTROGRAM_DURATION_IN_SECONDS
-    :param normalization_fn: Function that normalizes the spectrogram. Defaults to standardization.
+    :param normalization_fn: Extra normalisation applied after the dB conversion.
+        Defaults to PreprocessParams.SPECTROGRAM_NORMALIZATION so that training,
+        Grad-CAM and TCAV can never drift apart. Note that the volume
+        normalisation described in the book is already performed by
+        `power_to_db(..., ref=np.max)` below.
     :return: Mel-spectrogram with the desired attributes.
     """
     waveform, sample_rate = audio_to_waveform(file_path, sample_rate)
 
-    #waveform = trim_silence(waveform, top_db=top_db)
+    # Book, section 3.2: "silence at the beginning or end of recordings was
+    # trimmed". Off by default because every existing checkpoint was trained
+    # without it; pass trim=True (or `main.py --trim`) to enable.
+    if trim:
+        waveform = trim_silence(waveform, top_db=top_db)
     #waveform = librosa.effects.preemphasis(waveform)
 
     mel_spectrogram = librosa.feature.melspectrogram(y=waveform,

@@ -1,16 +1,31 @@
+"""Per-sample class probabilities for a trained classifier.
 
-from typing import Any, Callable, Dict, Optional
+Produces the "probability vector" table that `tcav_demo.py` consumes and that
+the Grad-CAM sweep filters on (book, section 5.1.4: only samples the model
+classified with ~99% SoftMax confidence were visualised).
+
+    python prob_vector.py ravdess --model <model.pt> --out ravdess_prob_vector.csv
+    python prob_vector.py tess    --model <model.pt> --out tess_prob_vector.csv
+    python prob_vector.py cremad  --model <model.pt> --out cremad_prob_vector.csv
+
+Columns: path, true_label, prob_<class> for every class, predicted_label,
+predicted_probability. Underscore column names match what tcav_demo.py and the
+analysis notebooks expect.
+"""
+
+import argparse
+from pathlib import Path
+from typing import Any, Callable, Dict, Optional, Sequence
+
 import numpy as np
 import pandas as pd
-from sklearn.calibration import LabelEncoder
 import torch
 import tqdm
-from ConstPaths import TessPaths
-from PreprocessParams import LABEL_STRINGS, MAX_SPECTOGRAM_DURATION_IN_SECONDS
+from PreprocessParams import (CREMAD_LABELS, MAX_SPECTOGRAM_DURATION_IN_SECONDS,
+                              RAVDESS_LABELS, TESS_LABELS)
 from Preprocess import audio_to_mel_spectrogram
-from audio_dataset import AllRawData, CREMARawData, EmotionSpecDataset, RavdessRawData, TESSRawData
-from models import ResNetWithAttention
-from pprint import pprint
+from audio_dataset import (CremaDSplitttedRawData, RavdessRawData,
+                           TessSplitttedRawData, sorted_samples)
 import torch.nn as nn
 from torch.utils.data import DataLoader
 
@@ -73,30 +88,32 @@ def get_raw_sample_attributes(model, raw_data_sample, idx2label_array, float_pre
     """
     attr = {} # dictionary to hold attributes
     path, true_label = raw_data_sample
-    
-    attr["path"] = path
-    attr["true label"] = true_label
-    
+
+    attr["path"] = str(path)
+    attr["true_label"] = true_label
+
     # preper data to the model
     tensor_mel_spec = preproccess_like_in_dataloader(path)
     # insert data to model and get probabilities
     probabilities = get_sample_probabilities_of_model(model, tensor_mel_spec)
-    
-    # get the de/encoding from classes(nums 0-7 for model) to labels(strings)
-    label_encoder = LabelEncoder()
-    label_encoder.fit(idx2label_array) # order Doesn't matter!
 
-    # insert all the probablities as such: "class label" : <probability_for_that_class>
-    # Add probabilities for each class to attributes
+    # Model output index i corresponds to the i-th class in *sorted* order,
+    # because EmotionSpecDataset encodes labels with sklearn's LabelEncoder.
+    class_names = sorted(idx2label_array)
+    if len(class_names) != len(probabilities):
+        raise ValueError(
+            f"Model produced {len(probabilities)} logits but {len(class_names)} class names "
+            f"were declared: {class_names}"
+        )
+
+    # insert all the probablities as such: "prob_<class label>" : <probability>
     for i, prob in enumerate(probabilities):
-        class_label = label_encoder.classes_[i]
-        attr[f'prob {class_label}'] = round(float(prob), float_precision)  # Convert numpy float to Python float for better serialization
+        attr[f'prob_{class_names[i]}'] = round(float(prob), float_precision)
 
     # Add predicted class and its probability
-    predicted_class_idx = probabilities.argmax()
-    predicted_class_label = label_encoder.classes_[predicted_class_idx]
-    attr["predicted label"] = predicted_class_label
-    attr["predicted probability"] = round(float(probabilities[predicted_class_idx]), float_precision)
+    predicted_class_idx = int(probabilities.argmax())
+    attr["predicted_label"] = class_names[predicted_class_idx]
+    attr["predicted_probability"] = round(float(probabilities[predicted_class_idx]), float_precision)
 
     # Convert the dictionary to a pandas Series
     
@@ -126,53 +143,6 @@ def get_raw_dataset_attributes(model, raw_dataset: set, idx2label_array):
     
     return attributes_df
 
-def tests1():
-    ######### Probability Vector Dataframe #########
-
-    # raw data loading:
-    ravdess_raw_data = RavdessRawData(include_calm=True, include_aug=False)
-
-    ravdess_raw_data.print_all_label_counts()
-
-    all_data = AllRawData((ravdess_raw_data, ))
-
-    train_set, val_set = all_data.train_val_test_split(0.2)
-
-    # pytorch's dataset creation:
-
-    train_ds = EmotionSpecDataset(train_set)
-    val_ds = EmotionSpecDataset(val_set)
-
-
-
-    # create the model:
-
-    model = ResNetWithAttention(num_classes=8)
-
-    # Load the model weights
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = torch.load("Eli ResNetWithAttention.pt", map_location=device)
-    
-    """
-    Get the probabilities from the model for the given dataset.
-    """
-    # probabilities = get_sample_probabilities_of_model(model, train_ds[0])  # Get probabilities for the first sample in the training dataset
-
-    # Use a subset of the training dataset for quick testing
-    subset_size = 10000  # Adjust this number based on how small a sample you want
-    ds_subset = torch.utils.data.Subset(val_ds, range(subset_size))
-
-    print(f"Computing probabilities for {subset_size} samples instead of {len(val_ds)} total samples")
-    #// probabilities_df = get_dataset_probabilities_of_model(model, ds_subset)
-    # print(f"True label: {label}")
-    # print(f"Predicted class: {predicted_class}")
-    print(f"Probabilities: {probabilities_df}")
-    
-    # Save the DataFrame to CSV
-    filepath = "probabilities.csv"
-    probabilities_df.to_csv(filepath, index=False)
-    print(f"Saved probabilities to {filepath}")
-
 def predict(classification_model: nn.Module, dataset: torch.utils.data.Dataset):
     """
     Predict the classes for all samples in the dataset using the provided classification model.
@@ -188,7 +158,6 @@ def predict(classification_model: nn.Module, dataset: torch.utils.data.Dataset):
     classification_model.to(device)
 
     all_preds = []
-    all_probs = []
 
     with torch.no_grad():
         for batch in dataloader:
@@ -205,12 +174,10 @@ def predict(classification_model: nn.Module, dataset: torch.utils.data.Dataset):
             preds = torch.argmax(probs, dim=1)
 
             all_preds.append(preds.cpu())
-            #all_probs.append(probs.cpu())
 
     all_preds = torch.cat(all_preds, dim=0)
-    #all_probs = torch.cat(all_probs, dim=0)
 
-    return all_preds #, all_probs
+    return all_preds
 
 def evaluate_single_label(
     model: nn.Module,
@@ -313,63 +280,34 @@ def evaluate_single_label(
 
     return out
 
-def test2():
-    raw_data = RavdessRawData(include_calm=True, include_aug=False)
-    
-    all_data = AllRawData((raw_data, ), val_ratio=0.3)
+def load_raw_samples(dataset: str) -> tuple[list, Sequence[str]]:
+    """Every (path, label) sample of a dataset plus its declared label space."""
+    if dataset == "ravdess":
+        return sorted_samples(RavdessRawData(include_calm=True).all_data), RAVDESS_LABELS
+    if dataset == "tess":
+        return sorted_samples(TessSplitttedRawData().all_data), TESS_LABELS
+    if dataset == "cremad":
+        return sorted_samples(CremaDSplitttedRawData().all_data), CREMAD_LABELS
+    raise ValueError(f"Unknown dataset {dataset!r}")
 
-    all_data = list(all_data.all_data) # must turn to list before passing to dataset to have same order of samples and predictions
-    
-    dataset = EmotionSpecDataset(all_data)
 
-    model = ResNetWithAttention(num_classes=8)
-    
-    # Load the model weights
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    # Load state dict first (always map to device at this point)
-    model = torch.load("ResNetWithAttention.pt", map_location=device)
-    model.to(device)
-
-    # Get predictions
-    preds = predict(model, dataset)
-    print(all_data[:4])  # Print first 4 samples to verify alignment
-    print(preds[:4])  # Print first 4 predictions
-    
 if __name__ == "__main__":
-    ######### Probability Vector Dataframe #########
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("dataset", choices=["ravdess", "tess", "cremad"])
+    parser.add_argument("--model", type=Path, required=True, help="trained .pt classifier")
+    parser.add_argument("--out", type=Path, required=True, help="destination CSV")
+    args = parser.parse_args()
 
-    #? 1. choose dataset
-    # raw data loading:
-    crema_raw_data = CREMARawData()
+    samples, label_space = load_raw_samples(args.dataset)
+    print(f"{len(samples)} samples, {len(label_space)} classes: {sorted(label_space)}")
 
-    data = set(list(crema_raw_data.all_data))
-    
-    #? 2. choose the trained model
-    # Load the model weights
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = torch.load(r"CREMA-D\models\2025-09-29_14-16-05\ResNetWithAttention.pt", map_location=device)
-    
-    #? 3. define the label2idx_array of the dataset (the order matters) 
-    label2idx_array = [ 
-                        LABEL_STRINGS.ANGRY,
-                        LABEL_STRINGS.DISGUSTED,
-                        LABEL_STRINGS.FEARFUL,
-                        LABEL_STRINGS.HAPPY,
-                        LABEL_STRINGS.NEUTRAL,
-                        LABEL_STRINGS.SAD
-                      ]
-    
-    #? 4. Get the attributes for the sample
-    attributes = get_raw_dataset_attributes(model, data, label2idx_array)
-    
-    #? 5. choose result's path (csv)
-    # save the df to csv
-    try:
-        attributes.to_csv(r"CREMA-D/prob_vector_tables/with test cremaD speaker shuffled.csv", index=False)
-    except Exception as e:
-        print(f"Error saving to CSV: {e}")
-        input("ensure file is closed and press Enter to continue...")
-        attributes.to_csv(r"CREMA-D/prob_vector_tables/with test cremaD speaker shuffled.csv", index=False)
-    
-    print("Saved to with test cremaD speaker shuffled.csv")
+    trained_model = torch.load(args.model, map_location=device, weights_only=False)
+
+    attributes = get_raw_dataset_attributes(trained_model, samples, list(label_space))
+
+    args.out.parent.mkdir(parents=True, exist_ok=True)
+    attributes.to_csv(args.out, index=False)
+    print(f"wrote {len(attributes)} rows to {args.out}")
 

@@ -1,13 +1,16 @@
 import os
+import random
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
+from sklearn.metrics import classification_report
 from torch import optim
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 
-from PreprocessParams import TARGET_FRAMES, FREQUENCY_BIN_COUNT
+from PreprocessParams import TARGET_FRAMES, FREQUENCY_BIN_COUNT, downsampled_size
 from Visualizations import plot_loss_per_epoch, plot_accuracy_per_epoch, plot_confusion_matrix
 from audio_dataset import EmotionSpecDataset
 
@@ -19,6 +22,19 @@ from collections import OrderedDict
 from typing import Any
 
 from results_manager import ResultsManager
+
+# The book reports a single 40-epoch run per dataset. Without a fixed seed the
+# weight init, the DataLoader shuffling and the train/val/test split all move,
+# and none of the reported numbers can be reproduced.
+DEFAULT_SEED = 42
+
+
+def set_seed(seed: int = DEFAULT_SEED) -> None:
+    """Seed every RNG the training pipeline touches."""
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 class SentimentModelHandler:
     """
@@ -60,8 +76,14 @@ class SentimentModelHandler:
         print(f"Training set class Weights: {self._class_weights}")
 
         self._criterion = kwargs.get("criterion", nn.CrossEntropyLoss)(weight=self._class_weights.to(self._device))
+        # Book, section 4.2.1: SGD, momentum 0.9, L2 weight decay 1e-6.
         self._optimizer = kwargs.get("optimizer", optim.SGD)(self._model.parameters(), lr=self._lr, momentum=0.9, weight_decay=1e-6)
-        self._scheduler = kwargs.get("scheduler", optim.lr_scheduler.MultiStepLR)(self._optimizer, milestones=[int(0.33 * 100), int(0.66 * 100)], gamma=0.1)
+        # Book, section 4.2.1: lr = 1e-3 until the 33rd epoch, then 1e-4. The
+        # second milestone only matters for runs longer than the reported 40
+        # epochs; it is kept so the schedule is explicit rather than implied by
+        # `int(0.33 * 100)`.
+        self._lr_milestones: list[int] = kwargs.get("lr_milestones", [33, 66])
+        self._scheduler = kwargs.get("scheduler", optim.lr_scheduler.MultiStepLR)(self._optimizer, milestones=self._lr_milestones, gamma=0.1)
 
         self._training_logs: dict = dict()
 
@@ -179,6 +201,11 @@ class SentimentModelHandler:
         running_loss = 0.0
         correct = 0
 
+        # Reset first: __test may be called more than once (plot_accuracies and
+        # report_classification both need it) and appending twice would double
+        # every count in the test confusion matrix.
+        self._true_labels_test, self._pred_labels_test = [], []
+
         with torch.no_grad():
             for mel_spec, label in tqdm(self._test_loader, desc="Model test"):
                 mel_spec, label = mel_spec.to(self._device), label.to(self._device)
@@ -279,7 +306,7 @@ class SentimentModelHandler:
             torch.save(self._model, Path(os.path.join(self._results.base_dir, f"{user_input}.pt")), _use_new_zipfile_serialization=True)
 
     def plot_losses(self, file_name: str | None = None):
-        file_name = f"{self._model.__class__.__name__}_losses" if None else file_name
+        file_name = file_name or f"{self._model.__class__.__name__}_losses"
         train_losses = [scores[0] for scores in self._train_scores]
         val_losses = [scores[0] for scores in self._val_scores]
         self._results.create_directory()
@@ -290,7 +317,7 @@ class SentimentModelHandler:
                             dir_path=self._results.base_dir)
 
     def plot_accuracies(self, file_name: str | None = None):
-        file_name = f"{self._model.__class__.__name__}_accuracies" if None else file_name
+        file_name = file_name or f"{self._model.__class__.__name__}_accuracies"
         train_accuracies = [scores[1] for scores in self._train_scores]
         val_accuracies = [scores[1] for scores in self._val_scores]
         self._results.create_directory()
@@ -305,7 +332,11 @@ class SentimentModelHandler:
                             dir_path=self._results.base_dir)
 
     def plot_confusion_matrix(self, file_name: str | None = None):
-        file_name = f"{self._model.__class__.__name__}_confusion_matrix" if None else file_name
+        file_name = file_name or f"{self._model.__class__.__name__}_confusion_matrix"
+        if not self._true_labels_test:
+            # The test split is only evaluated inside __test(); make the call
+            # order-independent so the Test panel is never silently dropped.
+            self.__test()
         train_confusion_data = (self._true_labels_train, self._pred_labels_train, self._train_class_names)
         val_confusion_data = (self._true_labels_val, self._pred_labels_val, self._val_class_names)
         test_confusion_data = (self._true_labels_test, self._pred_labels_test, self._test_class_names)
@@ -317,11 +348,83 @@ class SentimentModelHandler:
                               test_label_data=test_confusion_data,
                               dir_path=self._results.base_dir)
 
+    def report_classification(self, file_name: str = "classification_report") -> dict[str, dict]:
+        """Per-class and averaged precision / recall / F1 for every split.
+
+        This is the source of the tables in the project book: Table 2 (weighted
+        averages, depth vs single-input), Table 3 (per class, RAVDESS),
+        Tables 8-9 (TESS) and Tables 10-11 (CREMA-D). It was previously produced
+        by hand, so nothing in the repository regenerated it.
+
+        Writes `<file_name>.csv` (tidy, one row per class/average per split) and
+        `<file_name>.txt` (the human-readable sklearn report) into the run
+        directory, and returns the raw report dictionaries.
+        """
+        import pandas as pd
+
+        if not self._true_labels_test:
+            self.__test()
+
+        self._results.create_directory()
+
+        splits = {
+            "train": (self._true_labels_train, self._pred_labels_train, self._train_class_names),
+            "validation": (self._true_labels_val, self._pred_labels_val, self._val_class_names),
+            "test": (self._true_labels_test, self._pred_labels_test, self._test_class_names),
+        }
+
+        reports: dict[str, dict] = {}
+        rows: list[dict] = []
+        text_blocks: list[str] = []
+
+        for split_name, (y_true, y_pred, class_names) in splits.items():
+            if not y_true:
+                continue
+            labels = list(range(len(class_names)))
+            report = classification_report(
+                y_true, y_pred,
+                labels=labels,
+                target_names=class_names,
+                output_dict=True,
+                zero_division=0,
+            )
+            reports[split_name] = report
+            text_blocks.append(
+                f"===== {split_name} =====\n"
+                + classification_report(y_true, y_pred, labels=labels,
+                                        target_names=class_names, zero_division=0)
+            )
+            for key, value in report.items():
+                if not isinstance(value, dict):   # 'accuracy' is a bare float
+                    continue
+                rows.append({
+                    "split": split_name,
+                    "class": key,
+                    "precision": round(value["precision"], 3),
+                    "recall": round(value["recall"], 3),
+                    "f1-score": round(value["f1-score"], 3),
+                    "support": int(value["support"]),
+                })
+            rows.append({
+                "split": split_name, "class": "accuracy",
+                "precision": "", "recall": "",
+                "f1-score": round(report["accuracy"], 3),
+                "support": int(report["macro avg"]["support"]),
+            })
+
+        df = pd.DataFrame(rows)
+        df.to_csv(os.path.join(self._results.base_dir, f"{file_name}.csv"), index=False)
+        with open(os.path.join(self._results.base_dir, f"{file_name}.txt"), "w", encoding="utf-8") as fh:
+            fh.write("\n\n".join(text_blocks))
+
+        return reports
+
     def save_plots(self):
         #TODO: Add robust title for plots for easy identification
         self.plot_accuracies()
         self.plot_losses()
         self.plot_confusion_matrix()
+        self.report_classification()
 
 
 """Emo-Net Logic"""
@@ -406,7 +509,13 @@ class ResNetWithAttention(nn.Module):
         self.relu = nn.ReLU()
 
         # Fully connected layers (FC layers)
-        self.fc1 = nn.Linear(256 * (TARGET_FRAMES // 8) * (FREQUENCY_BIN_COUNT // 8), 1024)  # Assuming input size (32x32)
+        # The three ResNet modules each halve both spatial dimensions with a
+        # stride-2 3x3 convolution, i.e. n -> ceil(n / 2). That is only the same
+        # as `n // 8` when n is divisible by 8, so the size is derived with
+        # downsampled_size() instead - otherwise a duration change silently
+        # produces a shape mismatch at the first FC layer.
+        flattened_features = 256 * downsampled_size(TARGET_FRAMES) * downsampled_size(FREQUENCY_BIN_COUNT)
+        self.fc1 = nn.Linear(flattened_features, 1024)
         self.bn_fc1 = nn.BatchNorm1d(1024)
 
         self.fc2 = nn.Linear(1024, 512)
@@ -473,7 +582,13 @@ class ResNetWithAttention2d(nn.Module):
         self.relu = nn.ReLU()
 
         # Fully connected layers (FC layers)
-        self.fc1 = nn.Linear(256 * (TARGET_FRAMES // 8) * (FREQUENCY_BIN_COUNT // 8), 1024)  # Assuming input size (32x32)
+        # The three ResNet modules each halve both spatial dimensions with a
+        # stride-2 3x3 convolution, i.e. n -> ceil(n / 2). That is only the same
+        # as `n // 8` when n is divisible by 8, so the size is derived with
+        # downsampled_size() instead - otherwise a duration change silently
+        # produces a shape mismatch at the first FC layer.
+        flattened_features = 256 * downsampled_size(TARGET_FRAMES) * downsampled_size(FREQUENCY_BIN_COUNT)
+        self.fc1 = nn.Linear(flattened_features, 1024)
         self.bn_fc1 = nn.BatchNorm1d(1024)
 
         self.fc2 = nn.Linear(1024, 512)

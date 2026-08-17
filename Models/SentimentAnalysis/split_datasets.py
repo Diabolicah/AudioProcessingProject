@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import random
 import re
 import shutil
@@ -62,7 +63,6 @@ def split_dataset_with_multi_attribute_stratification(
     src = Path(original_dataset_path)
     dst = Path(splitted_dataset_path)
     rng = random.Random(seed)
-    np_rng = np.random.default_rng(seed)
 
     if allowed_extensions:
         allowed = {e.lower() for e in allowed_extensions}
@@ -117,7 +117,7 @@ def split_dataset_with_multi_attribute_stratification(
 
     # Try stratifying on the full tuple; if it fails (rare/undersized strata), fall back progressively:
     # 1) full tuple, 2) first attribute, 3) random (but reproducible).
-    try_order = ["label_tuple"] + ([f"attr_0"] if len(attribute_fetchers) > 0 else [])
+    try_order = ["label_tuple"] + (["attr_0"] if len(attribute_fetchers) > 0 else [])
     split_indices = None
     last_err = None
     for key in try_order:
@@ -197,7 +197,6 @@ def Tess_emotion_indexer(file_path: Path) -> str:
         emotion_ds_id = parts[emotion_index]
         return file_emotion_mapping[emotion_ds_id]
 
-# ! finish this later
 def Crema_d_emotion_indexer(file_path: Path) -> str:
     index_emotion_mapping = {
             'ANG': LABEL_STRINGS.ANGRY,
@@ -221,16 +220,56 @@ def Crema_d_emotion_indexer(file_path: Path) -> str:
         raise ValueError(f"Unknown emotion code '{emotion_code}' in file: {file_path}")
 
     return emotion
-# ! END finish this later
 
-df_manifest = split_dataset_with_multi_attribute_stratification(
-    original_dataset_path=r"CREMA-D DATASETS\original data",
-    splitted_dataset_path=r"CREMA-D DATASETS\splitted data",
-    attribute_fetchers=[Crema_d_emotion_indexer],
-    test_size=0.2,
-    val_size=0.1,
-    seed=123,
-    allowed_extensions={".wav", ".flac"},
-    preserve_tree=False,
-)
-print(df_manifest.head())
+
+# Datasets that ship as one flat folder and need an on-disk 70-10-20 split
+# before `CremaDSplitttedRawData` / `TessSplitttedRawData` can read them.
+#
+# The seed is per dataset because it is part of the published result, not a
+# free choice: seed 123 on CREMA-D reproduces the exact per-class supports of
+# Table 10 (train 890/890/889/889/760/890, val 127/127/127/128/109/127,
+# test 254/254/255/254/218/254). Seed 42 gives the same class proportions but
+# hands the one spare sample to a different class, so the supports no longer
+# line up with the book. Verified against the real corpus.
+SPLIT_JOBS = {
+    "cremad": dict(
+        original_dataset_path=r"CREMA-D\DATASETS\original data",
+        splitted_dataset_path=r"CREMA-D\DATASETS\splitted data",
+        attribute_fetchers=[Crema_d_emotion_indexer],
+        seed=123,
+    ),
+    "tess": dict(
+        original_dataset_path=r"TESS\TESS_ORIGINAL",
+        splitted_dataset_path=r"TESS\TESS_DATASET",
+        attribute_fetchers=[Tess_emotion_indexer],
+        seed=42,
+    ),
+}
+
+
+if __name__ == "__main__":
+    # This block used to execute on *import*, so merely importing the module
+    # copied the whole CREMA-D corpus.
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("dataset", choices=sorted(SPLIT_JOBS))
+    parser.add_argument("--seed", type=int, default=None,
+                        help="override the dataset's published seed (see SPLIT_JOBS)")
+    parser.add_argument("--test-size", type=float, default=0.2)
+    parser.add_argument("--val-size", type=float, default=0.1)
+    parser.add_argument("--dry-run", action="store_true", help="report the split without copying")
+    args = parser.parse_args()
+
+    job = dict(SPLIT_JOBS[args.dataset])
+    if args.seed is not None:
+        job["seed"] = args.seed
+
+    df_manifest = split_dataset_with_multi_attribute_stratification(
+        **job,
+        test_size=args.test_size,
+        val_size=args.val_size,
+        allowed_extensions={".wav", ".flac"},
+        preserve_tree=False,
+        dry_run=args.dry_run,
+    )
+    print(df_manifest["split"].value_counts())
+    print(df_manifest.head())
