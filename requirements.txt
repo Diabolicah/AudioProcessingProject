@@ -47,7 +47,15 @@ ipynbname==2024.1.0.0    # used by the analysis notebooks to locate the repo roo
 pytest==8.3.4
 
 # --- optional: XTTS neutral-speech synthesis (neutral_gen.py) ---
-# Only needed to regenerate the depth model's second input channel. It pins an
-# older numpy/torch than the rest of the project, so install it in a separate
-# environment.
-# TTS==0.22.0
+# Only needed to regenerate the depth model's second input channel (book
+# section 4.2.2). It pins an older numpy/torch than the rest of the project, so
+# install it in a SEPARATE environment on Python 3.11 (TTS does not support
+# 3.12+):
+#
+#     py -3.11 -m venv .venv-xtts
+#     .venv-xtts/Scripts/pip install TTS==0.22.0 "transformers==4.40.2"
+#
+# The transformers pin is required: TTS 0.22.0 imports `BeamSearchScorer`,
+# which current transformers releases no longer export, so a plain
+# `pip install TTS==0.22.0` resolves to a transformers that cannot import TTS.
+# Set COQUI_TOS_AGREED=1 to accept the XTTS licence non-interactively.

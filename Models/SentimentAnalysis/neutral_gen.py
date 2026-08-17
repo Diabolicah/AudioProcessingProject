@@ -3,8 +3,12 @@ from pathlib import Path
 import typing
 import re
 from tqdm import tqdm
-# TTS (Coqui XTTS) is only needed to actually synthesise audio; it pins old
-# torch/numpy versions, so it is imported lazily inside __main__ below.
+# TTS (Coqui XTTS) is only needed to actually synthesise audio and pins an old
+# stack, so it is imported lazily inside deepfake_and_create_synthesized_dataset.
+# Verified working combination (see requirements.txt):
+#     Python 3.11, TTS==0.22.0, transformers==4.40.2, torch/torchaudio==2.5.1
+# transformers 5.x no longer exports BeamSearchScorer (TTS fails to import) and
+# torchaudio >= 2.9 needs torchcodec to read the speaker reference wav.
 
 from ConstPaths import RavdessPaths
 from audio_dataset import RavdessRawDataWithNeutral
@@ -162,7 +166,19 @@ def deepfake_and_create_synthesized_dataset(tts_model) -> None:
 					* kids_rep2_act1.wav
     the neutral_synthesized dir should be in the ALL_AUDIO_DATA folder
     """
-    
+    # torch >= 2.6 defaults torch.load to weights_only=True and refuses the XTTS
+    # checkpoint's config objects. Allow-listing them is what the (previously
+    # commented-out) `add_safe_globals` import in this module was for; harmless
+    # on the pinned torch 2.5.1.
+    try:
+        from torch.serialization import add_safe_globals
+        from TTS.config.shared_configs import BaseDatasetConfig
+        from TTS.tts.configs.xtts_config import XttsConfig
+        from TTS.tts.models.xtts import XttsArgs, XttsAudioConfig
+        add_safe_globals([XttsConfig, XttsAudioConfig, XttsArgs, BaseDatasetConfig])
+    except ImportError:
+        pass
+
     for text_file in tqdm(RavdessPaths.TXT_FOR_DEEPFAKE_PATH.rglob("*.txt"), "Creating synthesized dataset"):
         with open(text_file, 'r') as file:
             lines = file.readlines()
