@@ -91,10 +91,20 @@ loss / accuracy / confusion-matrix PNGs, `*-classification-report.csv` and
 `.txt` (the per-class precision / recall / F1 tables), `training_info.txt`, and
 the checkpoint.
 
-The depth model additionally needs the XTTS neutral syntheses:
+The depth model additionally needs the XTTS neutral syntheses (96 clips, one
+per actor x statement x repetition). They require a **separate Python 3.11
+environment** - see requirements.txt for the exact pins, which matter:
 
 ```bash
-python neutral_gen.py            # writes the transcript files, then uncomment the TTS block
+py -3.11 -m venv .venv-xtts
+.venv-xtts/Scripts/pip install TTS==0.22.0 "transformers==4.40.2"
+.venv-xtts/Scripts/pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+python neutral_gen.py                       # writes the transcript files
+COQUI_TOS_AGREED=1 .venv-xtts/Scripts/python -c "
+from neutral_gen import deepfake_and_create_synthesized_dataset
+from TTS.api import TTS
+deepfake_and_create_synthesized_dataset(TTS('tts_models/multilingual/multi-dataset/xtts_v2'))"
+python main.py depth                        # then train, in the main environment
 ```
 
 ## 3. Grad-CAM — sections 4.3, 5.1.4
@@ -191,7 +201,7 @@ Run on RTX 5080 / torch 2.11+cu128. Splits reproduce the book's supports exactly
 | CAV-accuracy regime (Tables 5/13/16) | straddles 0.85 | 0.835-0.896 (600 patches, legacy mode) |
 | Table 6 magnitude range | -2.64..1.89 | -2.06..2.94 (legacy mode) |
 | **PCA spectrum (Figure 15)** | **79.8 / 14.6** | **81.4 / 14.7** sim / 85.6 / 10.6 captum run (augmented model, multiclass CAVs; band ~80-86 / 10-15 over classifier seeds) |
-| depth model (Table 2) | .713/.710/.705 | not run - needs the XTTS synthesis environment |
+| depth model (Table 2) | .713/.710/.705 test | .582/.587/.579 test (train 1.000 exact); the book's qualitative finding - depth is worse than single-input - reproduces |
 
 Two of the book's numbers are only reachable with **training-set augmentation**
 (`main.py ravdess --augment`, using the transforms already present in
@@ -222,6 +232,36 @@ The loss and accuracy curves match Figures 7-8 in shape: train saturates at 100%
 by epoch 6-7, validation plateaus, and the overfitting the book notes is present.
 RAVDESS validation plateaus ~73% here against ~80% in the book — the one
 metric that sits meaningfully lower.
+
+### Depth model — the book's finding reproduces, the magnitude does not
+
+Section 5.1.3 reports that adding an XTTS neutral second channel *hurts*: the
+depth model is worse than the single-input model overall. That direction
+reproduces clearly (test weighted F1 0.579 vs 0.695 here; the book has 0.705 vs
+0.721), and train is 1.000 in both. Our depth model is further below its
+single-input counterpart than the book's is - unsurprising, since the neutral
+channel is regenerated audio rather than the authors' own synthesis run, and
+XTTS output varies between runs.
+
+Per-class test F1 also reproduces the specific trade-off the book describes -
+the biggest losses are on emotions the neutral reference cannot help with:
+
+| class | single-input | depth | delta |
+| --- | --- | --- | --- |
+| angry | 0.831 | 0.790 | -0.041 |
+| calm | 0.795 | 0.747 | -0.048 |
+| disgusted | 0.790 | 0.767 | -0.023 |
+| fearful | 0.659 | 0.535 | -0.124 |
+| happy | 0.542 | 0.338 | -0.204 |
+| neutral | 0.696 | 0.300 | -0.396 |
+| sad | 0.452 | 0.507 | **+0.055** |
+| surprised | 0.795 | 0.515 | -0.280 |
+
+One caveat on the book's own account: it says the depth model "started to
+understand neutral more, at the cost of the non-neutral emotions". In our run
+neutral is the class that degrades *most*. The overall conclusion the book drew
+from this experiment - that the hypothesis failed and the single-input model is
+the one to carry forward - is what reproduces.
 
 ### Grad-CAM — reproduces
 

@@ -74,7 +74,7 @@ per-class supports exactly (RAVDESS/TESS seed 42, CREMA-D seed 123).
 | CAV-accuracy regime (Tables 5/13/16) | straddles 0.85 | **0.835–0.896** (600 patches, legacy mode) |
 | Table 6 magnitude range | −2.64 … 1.89 | **−2.06 … 2.94** (legacy mode) |
 | PCA of concept space (Figure 15) | 79.8 / 14.6 | **81.4 / 14.7** (augmented model + multiclass CAVs; captum end-to-end run 85.6 / 10.6; varies ~80–86 / 10–15 over classifier seeds) |
-| depth model test P/R/F1 (Table 2) | .713 / .710 / .705 | *pending — XTTS synthesis in progress* |
+| depth model test P/R/F1 (Table 2) | .713 / .710 / .705 | **.582 / .587 / .579** (train 1.000 exact; direction reproduced — worse than single-input) |
 
 Book errata found on the way: Table 8 lists TESS val `surprised = 41` (total
 2801 vs the corpus's 2800; correct value 40); Table 3's validation supports sum

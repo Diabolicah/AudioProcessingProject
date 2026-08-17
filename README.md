@@ -49,7 +49,7 @@ python gradcam_utils.py --model <model.pt> --attributes pv.csv
 | per-class supports (Tables 3/8/10) | — | exact, all three datasets |
 | concept dataset (Figures 5-6) | — | panel-for-panel match |
 | PCA of concept space (Figure 15) | 79.8 / 14.6 | 81.4 / 14.7 |
-| depth model (Table 2) | 0.705 test F1 | pending (needs the XTTS environment) |
+| depth model (Table 2) | 0.705 test F1 | 0.579 (direction reproduced: worse than single-input) |
 
 ## Repository layout
 
