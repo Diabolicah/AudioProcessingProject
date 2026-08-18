@@ -66,9 +66,9 @@ insertion AUC indicate a more faithful ranking.}
 \toprule
 Ordering & Deletion AUC $\downarrow$ & Insertion AUC $\uparrow$ & Total drop \\
 \midrule
-TCAV importance      & 9.11 & 8.96 & $-0.740$ \\
-Shuffled (control)   & 9.05 & 9.02 & $-0.740$ \\
-Random subspace (noise) & 9.36 & 9.36 & $-0.003$ \\
+TCAV importance      & 8.82 & 8.67 & $-0.769$ \\
+Shuffled (control)   & 8.75 & 8.75 & $-0.769$ \\
+Random subspace (noise) & 9.09 & 9.09 & $-0.002$ \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -76,14 +76,14 @@ Random subspace (noise) & 9.36 & 9.36 & $-0.003$ \\
 Two conclusions follow, and they point in opposite directions.
 
 The concepts are informative \emph{as a set}. Deleting the $12$ concept
-directions costs $0.740$ of margin, whereas deleting $12$ random directions
-costs $0.003$, a factor of roughly $250$. Since both interventions remove
+directions costs $0.769$ of margin, whereas deleting $12$ random directions
+costs $0.002$, a factor of roughly $380$. Since both interventions remove
 exactly $12$ of $D=71{,}680$ dimensions, the difference is attributable
 entirely to \emph{which} subspace is removed: the CAVs are aligned with
 class-relevant structure rather than with arbitrary directions.
 
 The TCAV ranking, however, is not faithful. Ordering deletions by TCAV
-importance (AUC $9.11$) is no better than shuffling them (AUC $9.05$), and both
+importance (AUC $8.82$) is no better than shuffling them (AUC $8.75$), and both
 necessarily converge to the same endpoint because they remove the same subspace.
 Were the per-sample importance scores meaningful, removing the highest-ranked
 concepts first would degrade the prediction faster than removing them in
@@ -94,6 +94,67 @@ against a random counterexample set, the twelve directions have a mean pairwise
 cosine similarity of $0.995$, so they span approximately one effective
 dimension. A ranking cannot recover per-concept structure that the
 representation does not contain.
+
+\subsection{Magnitude of the effect}
+\label{sec:ablation-percent}
+
+The areas in Table~\ref{tab:ablation-auc} are in logit units, which are hard to
+interpret on their own. Normalising every curve by the untouched decision margin
+expresses the same result as a percentage of the model's confidence
+(Figure~\ref{fig:percent-impact}).
+
+Removing all twelve concept directions costs $8.5\%$ of the decision margin;
+removing twelve random directions costs $0.02\%$. The concepts are therefore
+roughly $380$ times more consequential than an arbitrary subspace of the same
+dimension, while still accounting for under a tenth of the evidence the model
+uses. This is the quantitative form of the qualified conclusion above: the
+concept vocabulary is real but partial, and the remaining $91.5\%$ of the margin
+rests on structure the twelve hand-designed patterns do not describe.
+
+\begin{figure*}[t]
+\centering
+\includegraphics[width=\linewidth]{percent_impact.png}
+\caption{Insertion and deletion expressed as a percentage of the original
+decision margin. Left: deleting concept directions, most important first.
+Centre: restoring them to a stripped activation. Right: the share of the margin
+carried by the concepts, per emotion. Negative values indicate emotions whose
+confidence \emph{increases} when the concepts are removed.}
+\label{fig:percent-impact}
+\end{figure*}
+
+\begin{table}[t]
+\centering
+\caption{Share of the decision margin carried by the twelve concepts, per
+emotion (ratio of means; $n$ is the number of correctly classified recordings).
+A negative value means the concepts collectively argue \emph{against} the
+predicted class.}
+\label{tab:percent-emotion}
+\begin{tabular}{lrrrr}
+\toprule
+Emotion & $n$ & Baseline & After removal & \% of margin \\
+\midrule
+sad       & 168 & 8.44 & 5.74 & $+32.0$ \\
+disgusted & 182 & 9.09 & 6.72 & $+26.1$ \\
+happy     & 169 & 9.14 & 8.54 & $+6.7$ \\
+surprised & 180 & 8.67 & 8.09 & $+6.7$ \\
+angry     & 182 & 8.57 & 8.01 & $+6.5$ \\
+neutral   &  92 & 9.14 & 8.55 & $+6.4$ \\
+calm      & 184 & 9.69 & 9.47 & $+2.3$ \\
+fearful   & 178 & 9.94 & 11.41 & $-14.7$ \\
+\midrule
+overall   & 1335 & 9.09 & 8.32 & $+8.5$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The per-emotion split in Table~\ref{tab:percent-emotion} is markedly uneven. The
+concepts carry a third of the margin for \emph{sad} and a quarter for
+\emph{disgusted}, but only a few percent for \emph{calm}, \emph{angry},
+\emph{neutral}, \emph{happy} and \emph{surprised}. For \emph{fearful} the effect
+is negative: removing the concepts \emph{raises} the margin by $14.7\%$, so on
+balance the modelled patterns are evidence against that class rather than for
+it. The vocabulary is thus most explanatory for the sustained, low-arousal
+classes and least explanatory---indeed counter-explanatory---for \emph{fearful}.
 
 \subsection{Per-concept importance}
 \label{sec:ablation-per-concept}
