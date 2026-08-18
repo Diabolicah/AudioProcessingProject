@@ -196,9 +196,30 @@ def centroid_per_label_distribution(X, y) -> tuple[pd.DataFrame, pd.DataFrame]:
     return distribution, centroids_df
 
 
-def pca_scatter(X, y, out_path: Optional[Path] = None, title_suffix: str = ""):
-    """Figures 15-17, 25-27, 29-31: 2D PCA of the concept vectors."""
+def label_palette(all_labels) -> dict:
+    """Stable label -> colour map.
+
+    Colours are keyed by label *name*, so a plot that drops some emotions keeps
+    the colours of the ones it still shows. Deriving them from the labels
+    present instead (the obvious way) silently recolours every class as soon as
+    one is filtered out, which makes e.g. Figure 15 and Figure 16 impossible to
+    compare side by side.
+    """
     import matplotlib as mpl
+
+    ordered = sorted({str(l) for l in all_labels})
+    colours = mpl.colormaps.get_cmap("tab20")(np.linspace(0, 1, len(ordered)))
+    return {lbl: colours[i] for i, lbl in enumerate(ordered)}
+
+
+def pca_scatter(X, y, out_path: Optional[Path] = None, title_suffix: str = "",
+                palette: Optional[dict] = None):
+    """Figures 15-17, 25-27, 29-31: 2D PCA of the concept vectors.
+
+    :param palette: label -> colour map from :func:`label_palette`. Pass the
+        palette built from the *full* label set so filtered plots keep the same
+        colours as the unfiltered one.
+    """
     import matplotlib.pyplot as plt
 
     pca = PCA(n_components=2)
@@ -206,13 +227,14 @@ def pca_scatter(X, y, out_path: Optional[Path] = None, title_suffix: str = ""):
     evr = pca.explained_variance_ratio_
 
     labels = np.unique(y)
-    colors = mpl.colormaps.get_cmap("tab20")(np.linspace(0, 1, len(labels)))
+    if palette is None:
+        palette = label_palette(labels)
 
     fig = plt.figure(figsize=(8, 6))
-    for i, lbl in enumerate(labels):
+    for lbl in labels:
         mask = (y == lbl)
         plt.scatter(X_pca[mask, 0], X_pca[mask, 1], s=20, alpha=0.8,
-                    color=colors[i], label=str(lbl), edgecolors="none")
+                    color=palette[str(lbl)], label=str(lbl), edgecolors="none")
 
     plt.title(f"PCA 2D: PC1 {evr[0]*100:.1f}% | PC2 {evr[1]*100:.1f}% "
               f"(Total {evr.sum()*100:.1f}%){title_suffix}")
@@ -259,6 +281,9 @@ def run_full_analysis(tcav_csv: Path, out_dir: Path,
 
     outputs: dict[str, pd.DataFrame] = {}
 
+    # One palette for every plot in this run, keyed by label name.
+    palette = label_palette(y)
+
     outputs["clustering_all_concepts"] = clustering_metrics_table(X_all, y, random_state=random_state)
     outputs["average_magnitude_per_label"] = average_magnitude_per_label(vectors)
 
@@ -272,19 +297,20 @@ def run_full_analysis(tcav_csv: Path, out_dir: Path,
         if len(good) >= 2:
             X_good, _ = split_xy(vectors, concepts=good)
             outputs["clustering_good_cavs"] = clustering_metrics_table(X_good, y, random_state=random_state)
-            pca_scatter(X_good, y, out_dir / "pca_good_cavs.png", " - good CAVs")
+            pca_scatter(X_good, y, out_dir / "pca_good_cavs.png", " - good CAVs", palette=palette)
         else:
             # With captum's default classifier the reported accuracy is the test
             # split's class balance, so this legitimately comes out empty. Skip
             # rather than abort the rest of the analysis.
             print("[WARN] fewer than 2 concepts pass the bar; skipping the good-CAV tables")
 
-    pca_scatter(X_all, y, out_dir / "pca_all_concepts.png", " - all concepts")
+    pca_scatter(X_all, y, out_dir / "pca_all_concepts.png", " - all concepts", palette=palette)
 
     without_hn = ~np.isin(y, ["happy", "neutral"])
     if without_hn.any():
         pca_scatter(X_all[without_hn], y[without_hn],
-                    out_dir / "pca_no_happy_neutral.png", " - happy/neutral removed")
+                    out_dir / "pca_no_happy_neutral.png", " - happy/neutral removed",
+                    palette=palette)
 
     silhouette_curve(outputs["clustering_all_concepts"], out_dir / "cosine_silhouette.png")
 
