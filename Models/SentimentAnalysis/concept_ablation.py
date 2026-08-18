@@ -166,6 +166,49 @@ def ablation_curves(model, intervention: ConceptIntervention, specs: torch.Tenso
     }
 
 
+def per_concept_importance(model, intervention: ConceptIntervention, specs: torch.Tensor,
+                           targets: torch.Tensor, batch_size: int = 64,
+                           metric: str = "margin") -> np.ndarray:
+    """Leave-one-out deletion drop per sample per concept.
+
+    Returns an (n_samples, K) array: entry [s, j] is how much confidence in
+    sample s's predicted class is lost when concept j alone is removed. Unlike
+    the ranked insertion/deletion curves this attributes an effect to each
+    concept individually, so it can be grouped by emotion afterwards.
+    """
+    n_samples = len(specs)
+    k = intervention.basis.shape[0]
+    device = specs.device
+
+    intervention.mode = "delete"
+    baseline = []
+    zero = torch.zeros(n_samples, k, device=device)
+    for i in range(0, n_samples, batch_size):
+        intervention.keep = zero[i:i + batch_size]
+        baseline.append(_score(model, specs[i:i + batch_size], targets[i:i + batch_size], metric))
+    baseline = np.concatenate(baseline)
+
+    drops = np.zeros((n_samples, k), dtype=np.float32)
+    for j in range(k):
+        keep = torch.zeros(n_samples, k, device=device)
+        keep[:, j] = 1.0
+        vals = []
+        for i in range(0, n_samples, batch_size):
+            intervention.keep = keep[i:i + batch_size]
+            vals.append(_score(model, specs[i:i + batch_size], targets[i:i + batch_size], metric))
+        drops[:, j] = baseline - np.concatenate(vals)
+
+    intervention.mode = "off"
+    return drops
+
+
+def importance_by_emotion(drops: np.ndarray, labels, concept_names) -> pd.DataFrame:
+    """Mean leave-one-out drop per emotion per concept (rows: emotion)."""
+    df = pd.DataFrame(drops, columns=list(concept_names))
+    df.insert(0, "emotion", list(labels))
+    return df.groupby("emotion").mean().round(4)
+
+
 def build_orders(magnitudes: np.ndarray, seed: int = DEFAULT_SEED) -> dict:
     """Per-sample concept orderings: by TCAV importance, and shuffled."""
     rng = np.random.default_rng(seed)

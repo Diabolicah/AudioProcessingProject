@@ -1,0 +1,225 @@
+% Concept importance via insertion and deletion.
+% Drop into Overleaf and \input{concept_ablation} from the main document.
+% Requires: booktabs, graphicx, xcolor (all standard).
+% Bibliography entries are in concept_ablation.bib.
+
+\section{Concept Importance via Insertion and Deletion}
+\label{sec:concept-ablation}
+
+TCAV~\cite{kim2018tcav} assigns each concept a sensitivity score, but a score is
+not by itself evidence that the model \emph{uses} the concept. Insertion and
+deletion~\cite{petsiuk2018rise} supplies that evidence: an explanation is
+faithful if removing what it deems important degrades the prediction quickly,
+and if restoring it to an uninformative baseline recovers the prediction
+quickly. We adapt this protocol from input regions to concept directions.
+
+\subsection{Method}
+\label{sec:ablation-method}
+
+Let $a \in \mathbb{R}^{D}$ be the activation of a sample at the layer in which
+the Concept Activation Vectors (CAVs) were fitted, and let $c$ be the class the
+model predicts for that sample. We orthonormalise the $K=12$ CAVs into a basis
+$q_1,\dots,q_K$; orthonormalisation matters because the raw CAVs are strongly
+correlated, and without it removing ``the top $k$ concepts'' would subtract a
+shared component more than once.
+
+For a ranking of the concepts, deletion and insertion at step $k$ are
+\begin{align}
+a^{\text{del}}_k &= a - \textstyle\sum_{i \in \mathcal{S}_k} (a \cdot q_i)\, q_i,\\
+a^{\text{ins}}_k &= a - \textstyle\sum_{i=1}^{K} (a \cdot q_i)\, q_i
+                     + \textstyle\sum_{i \in \mathcal{S}_k} (a \cdot q_i)\, q_i,
+\end{align}
+where $\mathcal{S}_k$ holds the $k$ highest-ranked concepts. By construction
+$a^{\text{del}}_0 = a^{\text{ins}}_K = a$, so the two curves are complementary.
+The modified activation is propagated through the remainder of the network and
+we record the model's confidence in class $c$.
+
+\paragraph{Confidence measure.}
+We report the \emph{logit margin}, the logit of class $c$ minus the largest
+competing logit, rather than the softmax probability. The classifier is
+saturated on its own predictions (mean probability $0.99$), so probability-based
+curves are flat to four decimal places regardless of the intervention; the
+margin is a monotone transform of the same quantity but is not compressed.
+
+\paragraph{Controls.}
+Two controls separate two distinct claims. The \textsc{random} control applies
+the identical procedure to the same concept subspace in shuffled order, testing
+whether the \emph{ranking} carries information. The \textsc{noise} control
+replaces the CAVs with $K$ random orthonormal directions, testing whether the
+\emph{subspace} carries information or whether any $K$-dimensional subspace
+would behave the same. All experiments use the $1{,}335$ correctly classified
+RAVDESS recordings.
+
+\subsection{Faithfulness of the TCAV ranking}
+\label{sec:ablation-faithfulness}
+
+Table~\ref{tab:ablation-auc} reports the area under the deletion and insertion
+curves. A faithful ranking yields a low deletion AUC and a high insertion AUC.
+
+\begin{table}[t]
+\centering
+\caption{Insertion--deletion areas under the curve, and the total confidence
+lost when all $K=12$ directions are removed. Lower deletion AUC and higher
+insertion AUC indicate a more faithful ranking.}
+\label{tab:ablation-auc}
+\begin{tabular}{lccc}
+\toprule
+Ordering & Deletion AUC $\downarrow$ & Insertion AUC $\uparrow$ & Total drop \\
+\midrule
+TCAV importance      & 9.11 & 8.96 & $-0.740$ \\
+Shuffled (control)   & 9.05 & 9.02 & $-0.740$ \\
+Random subspace (noise) & 9.36 & 9.36 & $-0.003$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Two conclusions follow, and they point in opposite directions.
+
+The concepts are informative \emph{as a set}. Deleting the $12$ concept
+directions costs $0.740$ of margin, whereas deleting $12$ random directions
+costs $0.003$, a factor of roughly $250$. Since both interventions remove
+exactly $12$ of $D=71{,}680$ dimensions, the difference is attributable
+entirely to \emph{which} subspace is removed: the CAVs are aligned with
+class-relevant structure rather than with arbitrary directions.
+
+The TCAV ranking, however, is not faithful. Ordering deletions by TCAV
+importance (AUC $9.11$) is no better than shuffling them (AUC $9.05$), and both
+necessarily converge to the same endpoint because they remove the same subspace.
+Were the per-sample importance scores meaningful, removing the highest-ranked
+concepts first would degrade the prediction faster than removing them in
+arbitrary order. It does not.
+
+This is consistent with the geometry of the CAVs themselves: fitted pairwise
+against a random counterexample set, the twelve directions have a mean pairwise
+cosine similarity of $0.995$, so they span approximately one effective
+dimension. A ranking cannot recover per-concept structure that the
+representation does not contain.
+
+\subsection{Per-concept importance}
+\label{sec:ablation-per-concept}
+
+Because the ranking is uninformative, we attribute importance directly by
+leave-one-out deletion: each concept is removed on its own and we record the
+resulting change in margin. Table~\ref{tab:concept-importance} gives the result
+aggregated over all emotions.
+
+\begin{table}[t]
+\centering
+\caption{Leave-one-out concept importance, averaged over all correctly
+classified recordings. A single random direction is included for scale.}
+\label{tab:concept-importance}
+\begin{tabular}{lcc}
+\toprule
+Concept & Margin drop & Share of total \\
+\midrule
+\texttt{long\_constant\_thick}        & 0.247 & 53.2\% \\
+\texttt{long\_dropping\_steep\_thick} & 0.089 & 19.2\% \\
+\texttt{short\_dropping\_steep\_thin} & 0.061 & 13.2\% \\
+\texttt{short\_rising\_steep\_thick}  & 0.016 & 3.4\% \\
+\texttt{long\_dropping\_flat\_thick}  & 0.014 & 3.0\% \\
+\texttt{short\_rising\_steep\_thin}   & 0.010 & 2.1\% \\
+\texttt{long\_dropping\_steep\_thin}  & 0.008 & 1.7\% \\
+\texttt{short\_dropping\_steep\_thick}& 0.006 & 1.3\% \\
+\texttt{long\_rising\_flat\_thick}    & 0.006 & 1.3\% \\
+\texttt{long\_rising\_steep\_thin}    & 0.003 & 0.7\% \\
+\texttt{long\_rising\_steep\_thick}   & 0.003 & 0.6\% \\
+\texttt{short\_constant\_thick}       & 0.002 & 0.4\% \\
+\midrule
+\emph{single random direction}        & 0.0004 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Importance is heavily concentrated. \texttt{long\_constant\_thick}, a long
+horizontal band corresponding to sustained harmonic energy, accounts for over
+half of the total effect; the three highest-ranked concepts account for $85\%$.
+The six lowest-ranked concepts contribute under $6\%$ combined, and the weakest
+is within an order of magnitude of a random direction. We note that the
+individual drops sum to $0.46$ while removing all twelve jointly costs $0.74$:
+the concepts interact through the network rather than contributing additively,
+so these values constitute a ranking rather than a decomposition.
+
+\subsection{Per-emotion analysis}
+\label{sec:ablation-per-emotion}
+
+Aggregating over emotions conceals the more informative structure. Repeating the
+leave-one-out analysis within each emotion (Table~\ref{tab:importance-emotion},
+Figure~\ref{fig:importance-emotion}) shows that a concept's effect is
+\emph{signed}: a positive drop means the concept supported the prediction, and a
+negative drop means it argued against it, so that removing it increased the
+model's confidence.
+
+\begin{table}[t]
+\centering
+\small
+\setlength{\tabcolsep}{3.5pt}
+\caption{Change in logit margin when each concept is deleted, by emotion.
+Positive values indicate the concept supports the prediction; negative values
+indicate it opposes it. Concept names are abbreviated: L/S = long/short,
+const/drop/rise = constant/dropping/rising, st/fl = steep/flat,
+tk/tn = thick/thin.}
+\label{tab:importance-emotion}
+\begin{tabular}{lrrrrrrrrrrrr}
+\toprule
+& \rotatebox{90}{L-const/tk} & \rotatebox{90}{L-drop/fl/tk} & \rotatebox{90}{L-drop/st/tk}
+& \rotatebox{90}{L-drop/st/tn} & \rotatebox{90}{L-rise/fl/tk} & \rotatebox{90}{L-rise/st/tk}
+& \rotatebox{90}{L-rise/st/tn} & \rotatebox{90}{S-const/tk} & \rotatebox{90}{S-drop/st/tk}
+& \rotatebox{90}{S-drop/st/tn} & \rotatebox{90}{S-rise/st/tk} & \rotatebox{90}{S-rise/st/tn} \\
+\midrule
+angry     &  0.27 & $-0.39$ &  0.33 &  0.04 & $-0.15$ & $-0.02$ &  0.02 & $-0.06$ & $-0.10$ &  0.25 &  0.09 & $-0.00$ \\
+calm      & $-0.19$ &  0.05 & $-0.18$ &  0.02 &  0.20 & $-0.00$ & $-0.00$ & $-0.02$ &  0.08 & $-0.06$ &  0.01 &  0.04 \\
+disgusted &  1.09 &  0.33 &  0.23 &  0.00 &  0.15 &  0.05 &  0.00 &  0.07 &  0.06 &  0.11 & $-0.05$ & $-0.02$ \\
+fearful   & $-0.86$ & $-0.37$ & $-0.26$ & $-0.00$ & $-0.15$ & $-0.04$ & $-0.00$ & $-0.07$ & $-0.13$ &  0.14 &  0.06 &  0.02 \\
+happy     &  0.49 & $-0.19$ &  0.01 & $-0.01$ & $-0.12$ & $-0.02$ &  0.01 &  0.01 & $-0.03$ &  0.05 &  0.04 &  0.01 \\
+neutral   &  0.07 &  0.08 &  0.10 & $-0.00$ & $-0.11$ & $-0.03$ &  0.00 &  0.03 &  0.15 &  0.10 & $-0.04$ &  0.02 \\
+sad       &  1.05 &  0.65 &  0.24 &  0.03 &  0.34 &  0.07 & $-0.00$ &  0.05 &  0.09 & $-0.22$ &  0.02 &  0.02 \\
+surprised &  0.15 &  0.08 &  0.18 & $-0.00$ & $-0.01$ &  0.02 & $-0.00$ &  0.01 & $-0.03$ &  0.05 & $-0.02$ & $-0.02$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+\centering
+\includegraphics[width=\linewidth]{importance_by_emotion.png}
+\caption{Per-emotion concept importance. Red indicates that deleting the concept
+reduces confidence (the concept supports the prediction); blue indicates that
+deleting it increases confidence (the concept opposes the prediction).}
+\label{fig:importance-emotion}
+\end{figure}
+
+The dominant concept, \texttt{long\_constant\_thick}, does not act uniformly. It
+is the strongest positive contributor for \emph{sad} ($+1.05$),
+\emph{disgusted} ($+1.09$) and \emph{happy} ($+0.49$), yet the strongest
+negative contributor for \emph{fearful} ($-0.86$) and a negative contributor for
+\emph{calm} ($-0.19$). Sustained harmonic energy therefore functions as
+discriminative evidence in both directions: its presence pushes the model toward
+the sustained-phonation emotions and away from \emph{fearful}, whose
+realisations are characteristically less steady. An aggregate analysis averages
+these opposing roles toward zero and loses the effect entirely.
+
+Two further patterns are visible. For \emph{angry}, the falling-tone concepts
+separate by steepness in opposite directions: \texttt{long\_dropping\_steep\_thick}
+supports the prediction ($+0.33$) while \texttt{long\_dropping\_flat\_thick}
+opposes it ($-0.39$), consistent with anger being marked by sharp rather than
+gradual pitch falls. For \emph{fearful}, eleven of the twelve concepts have
+negative or negligible effect, indicating that the class is identified largely
+by the \emph{absence} of the modelled spectrogram structures rather than by the
+presence of any of them.
+
+\subsection{Discussion}
+\label{sec:ablation-discussion}
+
+The ablation study supports a qualified conclusion. The concept set is
+meaningful: the subspace it spans is strongly class-relevant relative to a
+random subspace of equal dimension, and leave-one-out deletion identifies a
+clear and acoustically interpretable ordering, dominated by sustained harmonic
+energy. The per-emotion decomposition further recovers signed, emotion-specific
+roles that are consistent with the phonetic character of the classes.
+
+The TCAV sensitivity scores themselves, however, do not survive the faithfulness
+test: their ranking performs no better than chance under insertion and deletion.
+We attribute this to the near-collinearity of the pairwise-fitted CAVs. This
+suggests that concept-based explanation of this model should report ablation
+importance rather than TCAV magnitude, and that the concept vocabulary would
+benefit from being fitted so as to be mutually discriminative rather than merely
+distinguishable from a random baseline.
